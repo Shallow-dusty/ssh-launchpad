@@ -74,7 +74,10 @@ case "$STRATEGY" in
     [ -f "$MANIFEST" ] || { echo "checksums.txt must be next to the offline asset" >&2; exit 8; }
     ;;
   cache)
-    [ -f "$ARCHIVE" ] && [ -f "$MANIFEST" ] || { echo "verified cache is incomplete" >&2; exit 8; }
+    if [ ! -f "$ARCHIVE" ] || [ ! -f "$MANIFEST" ]; then
+      echo "verified cache is incomplete" >&2
+      exit 8
+    fi
     ;;
   official|mirror|proxy)
     case "$BASE_URL" in
