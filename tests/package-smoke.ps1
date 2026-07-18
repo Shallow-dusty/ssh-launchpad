@@ -25,12 +25,18 @@ if ($releaseLayout) {
     }
 
     $bootstrap = $assets | Where-Object Name -Like 'ssh-launchpad_*_bootstrap.zip' | Select-Object -First 1
-    $entries = & tar -tf $bootstrap.FullName
-    if ($LASTEXITCODE -ne 0) { throw "Unable to inspect $($bootstrap.Name)" }
-    foreach ($required in @('bootstrap.ps1', 'bootstrap.sh', 'profiles/example.yaml', 'LICENSE', 'README.md')) {
-        if (-not ($entries -match ([regex]::Escape($required) + '$'))) {
-            throw "Package smoke check failed: bootstrap bundle missing $required"
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($bootstrap.FullName)
+    try {
+        $entries = $archive.Entries | ForEach-Object FullName
+        foreach ($required in @('bootstrap.ps1', 'bootstrap.sh', 'profiles/example.yaml', 'LICENSE', 'README.md')) {
+            if (-not ($entries -match ([regex]::Escape($required) + '$'))) {
+                throw "Package smoke check failed: bootstrap bundle missing $required"
+            }
         }
+    }
+    finally {
+        $archive.Dispose()
     }
 
     $manifest = Get-Content -LiteralPath (Join-Path $root 'checksums.txt')
