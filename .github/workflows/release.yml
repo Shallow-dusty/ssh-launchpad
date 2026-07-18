@@ -132,6 +132,7 @@ jobs:
         shell: pwsh
         run: |
           Invoke-Pester -Path tests/bootstrap.Tests.ps1 -CI
+          pnpm --dir frontend run build
           pnpm --dir frontend run test:e2e
       - name: Build user-scope installer
         run: wails build -clean -nsis -webview2 embed -installscope user -platform windows/amd64
