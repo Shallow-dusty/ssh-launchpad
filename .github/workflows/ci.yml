@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: go test ./...
+      - run: go vet ./...
+      - name: Build CLI
+        run: go build -trimpath ./cmd/ssh-launchpad
+
+  scripts:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            kind: shell
+          - os: windows-latest
+            kind: powershell
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: ShellCheck
+        if: matrix.kind == 'shell'
+        run: shellcheck scripts/bootstrap.sh
+      - name: Install Pester
+        if: matrix.kind == 'powershell'
+        shell: pwsh
+        run: Install-Module Pester -MinimumVersion 5.7.1 -Force -Scope CurrentUser
+      - name: Pester
+        if: matrix.kind == 'powershell'
+        shell: pwsh
+        run: Invoke-Pester -Path tests/bootstrap.Tests.ps1 -CI
+
+  ui:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install frontend
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck and build
+        working-directory: frontend
+        run: pnpm run build
+      - name: Install Chromium
+        working-directory: frontend
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Browser E2E
+        working-directory: frontend
+        run: pnpm run test:e2e
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
+      - name: Build desktop
+        run: wails build -clean -platform windows/amd64

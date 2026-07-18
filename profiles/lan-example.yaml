@@ -1,0 +1,35 @@
+schemaVersion: 1
+name: example-lan-host
+target:
+  platform: linux
+ssh:
+  enabled: true
+  port: 22
+  publicKeys: []
+  passwordAuthentication: false
+transport:
+  mode: lan
+  install: false
+exposure:
+  mode: custom
+  customCidrs:
+    - 192.168.1.0/24
+download:
+  strategy: package-manager
+  mirrorBaseUrl: ""
+  proxyUrl: ""
+  offlineBundle: ""
+  cacheDir: ""
+  retries: 3
+safety:
+  confirmHighRisk: true
+  preventSelfCut: true
+  scheduledDelaySeconds: 30
+  autoRollback: true
+advanced:
+  windowsSshService: sshd
+  linuxSshService: auto
+  macosSshLabel: com.openssh.sshd
+  stateDir: ""
+labels:
+  environment: example

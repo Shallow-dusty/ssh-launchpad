@@ -1,0 +1,20 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "ssh-launchpad",
+  "outputfilename": "SSH-Launchpad",
+  "frontend:install": "pnpm install --frozen-lockfile=false",
+  "frontend:build": "pnpm run build",
+  "frontend:dev:watcher": "pnpm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "SSH Launchpad Contributors",
+    "email": ""
+  },
+  "info": {
+    "companyName": "SSH Launchpad Contributors",
+    "productName": "SSH Launchpad",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright 2026 SSH Launchpad Contributors",
+    "comments": "Cross-platform SSH bootstrap and recovery studio"
+  }
+}

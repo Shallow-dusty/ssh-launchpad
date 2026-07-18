@@ -1,0 +1,182 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: go test ./...
+      - run: go vet ./...
+      - run: shellcheck scripts/bootstrap.sh
+
+  cli:
+    needs: quality
+    strategy:
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            ext: .exe
+          - goos: windows
+            goarch: arm64
+            ext: .exe
+          - goos: linux
+            goarch: amd64
+            ext: ''
+          - goos: linux
+            goarch: arm64
+            ext: ''
+          - goos: darwin
+            goarch: amd64
+            ext: ''
+          - goos: darwin
+            goarch: arm64
+            ext: ''
+    runs-on: ubuntu-latest
+    env:
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Build and package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          name="ssh-launchpad_${version}_${GOOS}_${GOARCH}"
+          mkdir -p "stage/${name}/profiles"
+          go build -trimpath -ldflags="-s -w -X github.com/Shallow-dusty/ssh-launchpad/internal/launchpad.Version=${version}" -o "stage/${name}/ssh-launchpad${{ matrix.ext }}" ./cmd/ssh-launchpad
+          cp LICENSE README.md CHANGELOG.md "stage/${name}/"
+          cp profiles/*.yaml "stage/${name}/profiles/"
+          if [[ "$GOOS" == windows ]]; then
+            cd stage
+            zip -qr "../${name}.zip" "${name}"
+          else
+            tar -C stage -czf "${name}.tar.gz" "${name}"
+          fi
+      - uses: actions/upload-artifact@v6
+        with:
+          name: cli-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ssh-launchpad_*.*
+          if-no-files-found: error
+
+  bootstrap:
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Package standalone bootstraps
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          name="ssh-launchpad_${version}_bootstrap"
+          mkdir -p "${name}/profiles"
+          cp scripts/bootstrap.ps1 scripts/bootstrap.sh LICENSE README.md "${name}/"
+          cp profiles/*.yaml "${name}/profiles/"
+          zip -qr "${name}.zip" "${name}"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: bootstrap
+          path: ssh-launchpad_*_bootstrap.zip
+
+  desktop-windows:
+    needs: quality
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install build tools
+        shell: pwsh
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
+          choco install nsis -y --no-progress
+      - name: Install frontend
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Install test dependencies
+        shell: pwsh
+        run: |
+          Install-Module Pester -MinimumVersion 5.7.1 -Force -Scope CurrentUser
+          pnpm --dir frontend exec playwright install chromium
+      - name: Script and browser tests
+        shell: pwsh
+        run: |
+          Invoke-Pester -Path tests/bootstrap.Tests.ps1 -CI
+          pnpm --dir frontend run test:e2e
+      - name: Build user-scope installer
+        run: wails build -clean -nsis -webview2 embed -installscope user -platform windows/amd64
+      - name: Name installer
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $installer = Get-ChildItem build/bin -Filter '*installer.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer missing' }
+          Copy-Item $installer.FullName "SSH-Launchpad_${version}_windows_amd64_setup.exe"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: desktop-windows
+          path: SSH-Launchpad_*_windows_amd64_setup.exe
+          if-no-files-found: error
+
+  publish:
+    needs: [cli, bootstrap, desktop-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          artifact-name: ssh-launchpad.spdx.json
+          output-file: release-assets/ssh-launchpad.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Generate checksums
+        working-directory: release-assets
+        run: |
+          sha256sum ./* | sort -k2 | sed 's|  \./|  |' > checksums.txt
+      - name: Package smoke
+        shell: pwsh
+        run: ./tests/package-smoke.ps1 -Path ./release-assets
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --verify-tag \
+            --title "SSH Launchpad $GITHUB_REF_NAME" \
+            --notes-file .github/release-notes-v0.1.0.md

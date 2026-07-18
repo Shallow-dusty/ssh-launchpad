@@ -1,0 +1,43 @@
+schemaVersion: 1
+name: example-tailnet-host
+
+target:
+  platform: auto
+
+ssh:
+  enabled: true
+  port: 2222
+  publicKeys:
+    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleReplaceWithYourControllerKey controller
+  passwordAuthentication: false
+
+transport:
+  mode: tailnet
+  install: false
+
+exposure:
+  mode: tailnet
+  customCidrs: []
+
+download:
+  strategy: official
+  mirrorBaseUrl: ""
+  proxyUrl: ""
+  offlineBundle: ""
+  cacheDir: ""
+  retries: 3
+
+safety:
+  confirmHighRisk: true
+  preventSelfCut: true
+  scheduledDelaySeconds: 20
+  autoRollback: true
+
+advanced:
+  windowsSshService: sshd
+  linuxSshService: auto
+  macosSshLabel: com.openssh.sshd
+  stateDir: ""
+
+labels:
+  environment: example
