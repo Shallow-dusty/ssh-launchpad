@@ -89,8 +89,10 @@ cd ..
 wails build
 ```
 
-Windows installers use NSIS. Linux and macOS desktop builds are produced on
-their native CI runners; unsigned or unnotarized artifacts are labeled as such.
+Windows installers use NSIS. `v0.1.0` publishes the desktop installer for
+Windows amd64; Linux and macOS desktop packaging remains a later native-runner
+milestone. CLI archives are published for all listed OS/architecture targets.
+Artifacts are unsigned and unnotarized.
 
 ## Documentation
 

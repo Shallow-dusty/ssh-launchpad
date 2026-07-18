@@ -2,7 +2,7 @@
 
 Last verified: 2026-07-18
 
-Current release target: `v0.1.0`
+Current release: [`v0.1.0`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.1.0)
 
 ## Implemented
 
@@ -27,7 +27,13 @@ validated by unit tests, generated commands, and native CI runners rather than
 by changing a real target. Release artifacts are not code-signed or notarized
 in `v0.1.0`.
 
+## Release evidence
+
+- Release workflow: <https://github.com/Shallow-dusty/ssh-launchpad/actions/runs/29652426746>
+- Assets: six CLI archives, standalone bootstrap bundle, Windows amd64 desktop
+  installer, SHA-256 manifest, and SPDX JSON SBOM.
+- Published tag commit: `31d564339785c8429f159f8233ae04f5c7fe418c`.
+
 ## Next action
 
-Run the release checklist, publish `v0.1.0`, then move this file's release target
-to the next milestone.
+Begin the `v0.2.0` disposable-target matrix without changing the `v0.1.0` tag.
