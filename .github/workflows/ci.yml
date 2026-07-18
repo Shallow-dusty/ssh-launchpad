@@ -38,6 +38,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+      - name: Install ShellCheck
+        if: matrix.kind == 'shell'
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: ShellCheck
         if: matrix.kind == 'shell'
         run: shellcheck scripts/bootstrap.sh
@@ -74,7 +77,7 @@ jobs:
         run: pnpm run build
       - name: Install Chromium
         working-directory: frontend
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install chromium
       - name: Browser E2E
         working-directory: frontend
         run: pnpm run test:e2e

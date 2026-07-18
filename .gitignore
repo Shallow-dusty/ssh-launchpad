@@ -2,7 +2,8 @@
 /dist/
 /artifacts/
 /output/
-/frontend/dist/
+/frontend/dist/*
+!/frontend/dist/.gitkeep
 /frontend/node_modules/
 /frontend/wailsjs/
 /frontend/package.json.md5
