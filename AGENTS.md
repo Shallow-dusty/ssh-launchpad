@@ -18,6 +18,7 @@ verification, and recovery logic.
 ## Development flow
 
 1. Read `README.md`, `STATUS.md`, and the relevant document under `docs/`.
+   Read `CHRONICLE.md` only when tracing origin, promotion, or past decisions.
 2. Run `git status --short --branch` before editing.
 3. Keep platform commands behind planner and executor interfaces.
 4. Add tests for planner output, repeat Apply, partial failure, rollback, and

@@ -76,6 +76,9 @@ open `Start SSH Launchpad.cmd`. The language switch is always available and pers
 
 ## 文档
 
+- [当前状态](STATUS.md)
+- [版本变化](CHANGELOG.md)
+- [项目编年史](CHRONICLE.md)
 - [平台支持与验证边界](docs/platform-support.md)
 - [架构](docs/architecture.md)
 - [网络与下载策略](docs/network-download-strategy.md)

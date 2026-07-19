@@ -60,9 +60,10 @@ not notarized.
 
 ## Promotion state
 
-`v0.2.0` passed the documented MVP promotion gate for the future standalone
-project location.
-The current checkout path is development evidence only and is not a runtime
-contract. The separate workspace migration, legacy-entry compatibility, and
-device-profile consumption remain root-workspace responsibilities after the
-Release is verified.
+`v0.2.0` passed the documented MVP promotion gate. The canonical local checkout
+is now `E:\coding\11.SSH-Launchpad`; the GitHub repository and Release URLs
+remain the portable runtime contract.
+
+The former `01.Agent-CLI/15.SSH-Launchpad` incubation path is retired. Legacy
+`00.scripts/01.SSH快速安装` remains archived, and the 3070 workspace consumes this
+release through its device profile without copying the generic implementation.
