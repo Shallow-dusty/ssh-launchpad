@@ -43,9 +43,25 @@ not notarized.
 - Standalone bilingual bootstrap bundle.
 - SHA-256 manifest and SPDX JSON SBOM.
 
+## Release evidence
+
+- Published Release:
+  <https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.0>
+- Tagged commit: `a2ab6a11ac1f854e4a9b0a87ed49278e9e694c70`.
+- Release workflow:
+  <https://github.com/Shallow-dusty/ssh-launchpad/actions/runs/29679501725>.
+- All ten downloaded assets passed the published SHA-256 manifest; the SPDX
+  JSON SBOM and archive content checks also passed.
+- The downloaded Windows x64 portable CLI reported `0.2.0`, schema `1`, and
+  UTF-8 no-BOM JSON. Its Chinese and English double-click launchers both
+  completed the read-only wizard smoke with exit code `0`.
+- The downloaded unsigned GUI installer completed silent install, first start,
+  and uninstall smoke; the installed application was removed afterward.
+
 ## Promotion state
 
-`v0.2.0` is the MVP promotion gate for the future standalone project location.
+`v0.2.0` passed the documented MVP promotion gate for the future standalone
+project location.
 The current checkout path is development evidence only and is not a runtime
 contract. The separate workspace migration, legacy-entry compatibility, and
 device-profile consumption remain root-workspace responsibilities after the
