@@ -48,8 +48,8 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$(uname -s)" in
-  Linux) OS=linux; ASSET_OS=Linux ;;
-  Darwin) OS=darwin; ASSET_OS=macOS ;;
+  Linux) ASSET_OS=Linux ;;
+  Darwin) ASSET_OS=macOS ;;
   *) say "不支持的操作系统：$(uname -s)" "Unsupported operating system: $(uname -s)" >&2; exit 9 ;;
 esac
 

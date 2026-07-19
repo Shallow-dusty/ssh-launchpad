@@ -20,7 +20,10 @@ jq -c '.components[]' "$metadata" | while IFS= read -r component; do
   license=$(printf '%s' "$component" | jq -r '.license')
   case "$file" in /*|../*|*/../*|*/..) echo "file must stay inside INPUT_DIR: $file" >&2; exit 2 ;; esac
   case "$source_url" in https://*) ;; *) echo "sourceUrl must use HTTPS: $file" >&2; exit 8 ;; esac
-  [ -n "$license" ] && [ "$license" != null ] || { echo "license missing: $file" >&2; exit 2; }
+  if [ -z "$license" ] || [ "$license" = null ]; then
+    echo "license missing: $file" >&2
+    exit 2
+  fi
   [ -f "$input/$file" ] || { echo "payload missing: $file" >&2; exit 2; }
   mkdir -p "$stage/payload/$(dirname "$file")"
   cp "$input/$file" "$stage/payload/$file"
