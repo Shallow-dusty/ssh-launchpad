@@ -13,7 +13,7 @@
   "info": {
     "companyName": "SSH Launchpad Contributors",
     "productName": "SSH Launchpad",
-    "productVersion": "0.1.0",
+    "productVersion": "0.2.0",
     "copyright": "Copyright 2026 SSH Launchpad Contributors",
     "comments": "Cross-platform SSH bootstrap and recovery studio"
   }

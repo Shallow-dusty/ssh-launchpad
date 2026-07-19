@@ -1,25 +1,25 @@
 # Roadmap
 
-## v0.1.0 — first installable release
+## v0.2.0 — beginner MVP
 
-Acceptance:
+- Chinese/English GUI and CLI guided paths.
+- Standard-user launch with scoped elevation.
+- Portable double-click packages and offline help.
+- Key-role onboarding, profile import/export, support redaction, update check.
+- Mock/CI safety coverage without changing a personal remote-access host.
 
-- CLI archives for Windows, Linux, and macOS on amd64 and arm64.
-- Standalone PowerShell and POSIX bootstrap bundle.
-- At least one successfully built desktop artifact.
-- SHA-256 manifest and SBOM.
-- CI green for Go, UI, scripts, and package smoke tests.
-- Public repository contains no real device profile, token, key, or log.
+## v0.3.0 candidates
 
-## v0.2.0 — real target matrix
-
-- Disposable Windows Sandbox/VM Apply and repeat-Apply tests.
-- Disposable Ubuntu and macOS Apply and rollback tests.
-- Controller-side real SSH handshake and authentication verifier.
+- Disposable Windows Sandbox/VM real Apply, interrupted servicing, repeat Apply,
+  cleanup, and uninstall-state matrix.
+- Disposable Ubuntu and macOS Apply/rollback validation.
+- Controller-side real TCP, SSH handshake, authentication, identity, and host
+  fingerprint pairing assistant.
+- Automatic multi-component offline-pack selection.
 - Signed Windows artifacts when certificate infrastructure is available.
 
 ## Later
 
-- Signed/notarized macOS distribution.
-- Package repositories and managed update channel.
-- Organization policy bundles and centrally attested external verification.
+- Signed/notarized macOS desktop distribution.
+- Native Linux/macOS desktop installers.
+- Managed update channels with explicit rollback.

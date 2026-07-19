@@ -26,5 +26,5 @@ pipe network content into a shell.
 - TLS certificate verification is never disabled.
 
 Checksums prove that an asset matches the published manifest; they do not
-replace release signing. `v0.1.0` also publishes an SBOM. Signing and
+replace release signing. `v0.2.0` also publishes an SBOM. Signing and
 notarization status is stated in each release.

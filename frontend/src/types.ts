@@ -93,6 +93,30 @@ export interface DesktopRequest {
   externalVerify: string;
 }
 
+export interface PublicKeyInfo {
+  label: string;
+  path: string;
+  publicKey: string;
+  privateKeyPath?: string;
+  generated: boolean;
+}
+
+export interface ElevatedJob {
+  id: string;
+  state: "waiting-for-permission" | "running" | "completed" | "failed" | "cancelled";
+  report?: Report;
+  error?: string;
+  events?: Array<{ kind: string; message: string; actionId?: string }>;
+}
+
+export interface UpdateInfo {
+  currentVersion: string;
+  latestVersion: string;
+  available: boolean;
+  url: string;
+  channel: string;
+}
+
 declare global {
   interface Window {
     go?: {
@@ -100,8 +124,18 @@ declare global {
         App?: {
           DefaultProfile(): Promise<Profile>;
           Run(request: DesktopRequest): Promise<Report>;
+          BeginElevatedApply(request: DesktopRequest): Promise<ElevatedJob>;
+          ElevatedApplyStatus(id: string): Promise<ElevatedJob>;
+        DismissElevatedJob(id: string): Promise<void>;
+        CheckForUpdate(): Promise<UpdateInfo>;
           Rollback(journalPath: string): Promise<Report>;
           ExportReport(report: Report): Promise<string>;
+          ImportProfile(): Promise<Profile>;
+          ExportProfile(profile: Profile): Promise<string>;
+          DiscoverPublicKeys(): Promise<PublicKeyInfo[]>;
+          GenerateControllerKey(label: string): Promise<PublicKeyInfo>;
+          ImportPublicKey(): Promise<PublicKeyInfo>;
+          ExportPairingFile(publicKey: string): Promise<string>;
         };
       };
     };

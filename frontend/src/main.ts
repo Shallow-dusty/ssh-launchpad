@@ -1,9 +1,10 @@
 import "./styles.css";
-import type { DesktopRequest, PlanAction, Profile, Report, Snapshot, Stage } from "./types";
+import { detectLanguage, translate, type Language, type MessageKey } from "./i18n";
+import type { DesktopRequest, ElevatedJob, PlanAction, Profile, PublicKeyInfo, Report, Snapshot, Stage } from "./types";
 
 const defaultProfile: Profile = {
   schemaVersion: 1,
-  name: "default",
+  name: "recommended",
   target: { platform: "auto" },
   ssh: { enabled: true, port: 22, publicKeys: [], passwordAuthentication: false },
   transport: { mode: "tailnet", install: false },
@@ -11,493 +12,913 @@ const defaultProfile: Profile = {
   download: { strategy: "official", mirrorBaseUrl: "", proxyUrl: "", offlineBundle: "", cacheDir: "", retries: 3 },
   safety: { confirmHighRisk: true, preventSelfCut: true, scheduledDelaySeconds: 20, autoRollback: true },
   advanced: { windowsSshService: "sshd", linuxSshService: "auto", macosSshLabel: "com.openssh.sshd", stateDir: "" },
-  labels: {}
+  labels: { experience: "guided" }
 };
+
+type View = "home" | "wizard" | "advanced";
+type WizardMode = "setup" | "repair";
+type InstallState = "idle" | "waiting-for-permission" | "running" | "failed" | "cancelled" | "completed";
 
 const state: {
+  language: Language;
+  view: View;
+  mode: WizardMode;
+  step: number;
   profile: Profile;
   report?: Report;
+  planReport?: Report;
+  verifyReport?: Report;
   busy: boolean;
-  activeView: string;
+  backend: boolean;
+  detectedKeys: PublicKeyInfo[];
+  selectedKey?: PublicKeyInfo;
   progress: Array<{ kind: string; message: string; actionId?: string }>;
+  installState: InstallState;
+  installError: string;
+  activeJob?: ElevatedJob;
+  toast: string;
 } = {
+  language: detectLanguage(),
+  view: "home",
+  mode: "setup",
+  step: 0,
   profile: structuredClone(defaultProfile),
   busy: false,
-  activeView: "status",
-  progress: []
+  backend: Boolean(window.go?.main?.App),
+  detectedKeys: [],
+  progress: [],
+  installState: "idle",
+  installError: "",
+  toast: ""
 };
 
-document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
-  <div class="shell">
-    <aside class="sidebar" aria-label="Primary navigation">
-      <div class="brand">
-        <span class="brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 32 32" role="img"><path d="M6 10.5 16 5l10 5.5v11L16 27 6 21.5Z"/><path d="m11 15 3 3-3 3m5 0h5"/></svg>
-        </span>
-        <span><strong>SSH Launchpad</strong><small>Control access, calmly.</small></span>
-      </div>
-      <nav>
-        ${navButton("status", "Status", statusIcon())}
-        ${navButton("plan", "Plan", planIcon())}
-        ${navButton("progress", "Progress", progressIcon())}
-        ${navButton("verify", "Verify", verifyIcon())}
-        ${navButton("recovery", "Recovery", recoveryIcon())}
-        ${navButton("advanced", "Advanced", advancedIcon())}
-      </nav>
-      <div class="sidebar-foot">
-        <span class="version">v0.1.0</span>
-        <button class="icon-button" id="theme-toggle" aria-label="Toggle color theme">${themeIcon()}</button>
-      </div>
-    </aside>
-
-    <main id="workspace" class="workspace" tabindex="-1">
-      <header class="topbar material">
-        <div>
-          <p class="eyebrow">CHECK · PLAN · APPLY · VERIFY</p>
-          <h1 id="view-title">Host status</h1>
-        </div>
-        <div class="top-actions">
-          <span id="backend-mode" class="backend-pill">Detecting core…</span>
-          <button class="button secondary" id="export-report" disabled>Export report</button>
-          <button class="button primary" id="run-check">Run check</button>
-        </div>
-      </header>
-
-      <div id="announcer" class="sr-only" aria-live="polite"></div>
-      <section id="view" class="view" aria-labelledby="view-title"></section>
-    </main>
-  </div>
-
-  <dialog id="apply-dialog" aria-labelledby="apply-title">
-    <form method="dialog" class="dialog-card">
-      <div class="dialog-icon danger" aria-hidden="true">${warningIcon()}</div>
-      <div>
-        <p class="eyebrow danger-text">HIGH-IMPACT ACTION</p>
-        <h2 id="apply-title">Confirm the exact changes</h2>
-        <p id="apply-summary" class="muted"></p>
-      </div>
-      <div id="apply-actions" class="confirm-list"></div>
-      <label class="check-row">
-        <input id="apply-ack" type="checkbox" />
-        <span>I reviewed the actions, rollback coverage, and control-channel risk.</span>
-      </label>
-      <label class="check-row">
-        <input id="schedule-risky" type="checkbox" />
-        <span>Schedule self-cut-sensitive actions after a delay.</span>
-      </label>
-      <label class="field">
-        <span>Independent verification target</span>
-        <input id="external-verify" type="text" inputmode="url" autocomplete="off" placeholder="controller-visible.example:22" />
-        <small>Required for scheduled self-cut-sensitive work. It must be reachable before scheduling and rechecked from the controller afterward.</small>
-      </label>
-      <div class="dialog-actions">
-        <button value="cancel" class="button secondary">Cancel</button>
-        <button id="confirm-apply" value="default" class="button danger-button" disabled>Apply changes</button>
-      </div>
-    </form>
-  </dialog>
-`;
-
-const titles: Record<string, string> = {
-  status: "Host status",
-  plan: "Change plan",
-  progress: "Execution progress",
-  verify: "Layered verification",
-  recovery: "Recovery & rollback",
-  advanced: "Advanced configuration"
-};
-
-function navButton(view: string, label: string, icon: string): string {
-  return `<button class="nav-item ${view === "status" ? "active" : ""}" data-view="${view}" aria-current="${view === "status" ? "page" : "false"}">${icon}<span>${label}</span></button>`;
-}
+const t = (key: MessageKey, values: Record<string, string | number> = {}) => translate(state.language, key, values);
 
 async function initialise(): Promise<void> {
-  const backend = window.go?.main?.App;
-  if (backend) {
+  document.documentElement.lang = state.language;
+  document.documentElement.dataset.theme = localStorage.getItem("ssh-launchpad-theme") ?? "";
+  if (window.go?.main?.App) {
     try {
-      state.profile = await backend.DefaultProfile();
-      setText("#backend-mode", "Native core");
-      document.querySelector("#backend-mode")?.classList.add("online");
-    } catch {
-      setText("#backend-mode", "Native core unavailable");
+      state.profile = await window.go.main.App.DefaultProfile();
+      state.profile.name = "recommended";
+      state.profile.labels = { ...state.profile.labels, experience: "guided" };
+      state.detectedKeys = await window.go.main.App.DiscoverPublicKeys();
+    } catch (error) {
+      state.toast = friendlyError(error);
     }
   } else {
-    setText("#backend-mode", "Interactive prototype");
+    state.detectedKeys = [mockPublicKey()];
+  }
+  const firstKey = state.detectedKeys[0];
+  if (firstKey && !state.selectedKey) {
+    state.selectedKey = firstKey;
+    state.profile.ssh.publicKeys = [firstKey.publicKey];
   }
   window.runtime?.EventsOn("launchpad:event", (event) => {
     state.progress.push(event);
-    announce(`${event.kind}: ${event.message}`);
-    if (state.activeView === "progress") render();
+    announce(simpleEvent(event));
+    if (state.view === "wizard" && state.step === 2) renderPage();
   });
-  bindEvents();
-  render();
+  window.runtime?.EventsOn("launchpad:second-instance", () => {
+    showToast(state.language === "zh-CN"
+      ? "SSH Launchpad 已经在运行；已把这个窗口带到前台。"
+      : "SSH Launchpad is already running; this window was brought to the front.");
+  });
+  buildShell();
+  renderPage();
 }
 
-function bindEvents(): void {
-  document.querySelectorAll<HTMLButtonElement>(".nav-item").forEach((button) => {
-    button.addEventListener("pointerdown", () => button.classList.add("pressed"));
-    button.addEventListener("pointerup", () => button.classList.remove("pressed"));
-    button.addEventListener("pointercancel", () => button.classList.remove("pressed"));
-    button.addEventListener("click", () => {
-      state.activeView = button.dataset.view ?? "status";
-      document.querySelectorAll(".nav-item").forEach((item) => {
-        const active = item === button;
-        item.classList.toggle("active", active);
-        item.setAttribute("aria-current", active ? "page" : "false");
-      });
-      setText("#view-title", titles[state.activeView] ?? "SSH Launchpad");
-      render(true);
-    });
+function buildShell(): void {
+  document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
+    <div class="app-shell">
+      <header class="app-header material">
+        <button class="brand-button" id="brand-home" aria-label="${escapeAttribute(t("backHome"))}">
+          <span class="brand-mark" aria-hidden="true">${launchIcon()}</span>
+          <span><strong>${t("appName")}</strong><small>${t("appTagline")}</small></span>
+        </button>
+        <div class="header-actions">
+          <span class="backend-pill ${state.backend ? "online" : ""}">${state.backend ? t("backendNative") : t("backendDemo")}</span>
+          <label class="language-select"><span class="sr-only">${t("language")}</span><select id="language" aria-label="${t("language")}"><option value="zh-CN" ${state.language === "zh-CN" ? "selected" : ""}>中文</option><option value="en" ${state.language === "en" ? "selected" : ""}>English</option></select></label>
+          <button class="icon-button" id="theme-toggle" aria-label="${t("theme")}">${themeIcon()}</button>
+        </div>
+      </header>
+      <main id="workspace" class="workspace" tabindex="-1">
+        <div id="announcer" class="sr-only" aria-live="polite"></div>
+        <section id="view" class="view"></section>
+      </main>
+      <div id="toast" class="toast ${state.toast ? "show" : ""}" role="status">${escapeHtml(state.toast)}</div>
+    </div>
+    <dialog id="install-dialog" aria-labelledby="install-dialog-title">
+      <form method="dialog" class="dialog-card">
+        <div class="dialog-symbol warning" aria-hidden="true">${shieldIcon()}</div>
+        <h2 id="install-dialog-title">${t("confirmTitle")}</h2>
+        <p class="muted">${t("confirmBody")}</p>
+        <div id="confirm-actions" class="confirm-list"></div>
+        <label class="check-row"><input id="confirm-ack" type="checkbox" /><span>${t("confirmAck")}</span></label>
+        <div class="dialog-actions">
+          <button value="cancel" class="button secondary">${t("cancel")}</button>
+          <button id="confirm-install" value="default" class="button primary" disabled>${t("confirmInstall")}</button>
+        </div>
+      </form>
+    </dialog>
+    <input id="profile-file" class="sr-only" type="file" accept=".yaml,.yml,.json" />
+    <input id="key-file" class="sr-only" type="file" accept=".pub,.txt" />
+  `;
+  bindGlobalEvents();
+}
+
+function bindGlobalEvents(): void {
+  document.querySelector("#brand-home")?.addEventListener("click", goHome);
+  document.querySelector<HTMLSelectElement>("#language")?.addEventListener("change", (event) => {
+    const language = (event.currentTarget as HTMLSelectElement).value as Language;
+    state.language = language;
+    localStorage.setItem("ssh-launchpad-language", language);
+    document.documentElement.lang = language;
+    buildShell();
+    renderPage();
+    announce(language === "zh-CN" ? "已切换为中文" : "Switched to English");
   });
-  document.querySelector("#run-check")?.addEventListener("click", () => runStage("check"));
-  document.querySelector("#export-report")?.addEventListener("click", exportReport);
-  document.querySelector("#theme-toggle")?.addEventListener("click", toggleTheme);
-  const ack = document.querySelector<HTMLInputElement>("#apply-ack")!;
+  document.querySelector("#theme-toggle")?.addEventListener("click", () => {
+    const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem("ssh-launchpad-theme", next);
+  });
+  const ack = document.querySelector<HTMLInputElement>("#confirm-ack")!;
   ack.addEventListener("change", () => {
-    document.querySelector<HTMLButtonElement>("#confirm-apply")!.disabled = !ack.checked;
+    document.querySelector<HTMLButtonElement>("#confirm-install")!.disabled = !ack.checked;
   });
-  document.querySelector("#confirm-apply")?.addEventListener("click", (event) => {
+  document.querySelector("#confirm-install")?.addEventListener("click", (event) => {
     event.preventDefault();
     if (!ack.checked) return;
-    document.querySelector<HTMLDialogElement>("#apply-dialog")!.close();
-    runStage(
-      "apply",
-      true,
-      document.querySelector<HTMLInputElement>("#schedule-risky")!.checked,
-      document.querySelector<HTMLInputElement>("#external-verify")!.value.trim()
-    );
+    document.querySelector<HTMLDialogElement>("#install-dialog")!.close();
+    void beginSafeInstall();
   });
+  document.querySelector<HTMLInputElement>("#profile-file")?.addEventListener("change", importProfileFromBrowser);
+  document.querySelector<HTMLInputElement>("#key-file")?.addEventListener("change", importKeyFromBrowser);
 }
 
-function render(animate = false): void {
+function renderPage(): void {
   const view = document.querySelector<HTMLElement>("#view")!;
-  if (animate) animateFromCurrent(view);
-  switch (state.activeView) {
-    case "plan":
-      view.innerHTML = renderPlan();
-      bindPlanEvents();
-      break;
-    case "progress":
-      view.innerHTML = renderProgress();
-      break;
-    case "verify":
-      view.innerHTML = renderVerify();
-      document.querySelector("#run-verify")?.addEventListener("click", () => runStage("verify"));
-      break;
-    case "recovery":
-      view.innerHTML = renderRecovery();
-      bindRecoveryEvents();
-      break;
-    case "advanced":
-      view.innerHTML = renderAdvanced();
-      bindAdvancedEvents();
-      break;
-    default:
-      view.innerHTML = renderStatus();
-      document.querySelector("#status-plan")?.addEventListener("click", () => runStage("plan"));
-  }
+  animateFromCurrent(view);
+  if (state.view === "home") view.innerHTML = renderHome();
+  if (state.view === "wizard") view.innerHTML = renderWizard();
+  if (state.view === "advanced") view.innerHTML = renderAdvanced();
+  bindPageEvents();
 }
 
-function renderStatus(): string {
-  const snapshot = state.report?.snapshot;
+function renderHome(): string {
   return `
-    <div class="hero-grid">
-      <article class="hero-card material">
-        <div class="hero-copy">
-          <p class="eyebrow">CURRENT HOST</p>
-          <h2>${escapeHtml(snapshot?.hostname ?? "Ready to inspect")}</h2>
-          <p>${snapshot ? `${escapeHtml(snapshot.platform)} · ${escapeHtml(snapshot.arch)} · ${snapshot.isAdministrator ? "elevated" : "standard token"}` : "Run a read-only Check to detect the host, platform, services, network, and exposure."}</p>
+    <div class="home">
+      <section class="welcome">
+        <p class="eyebrow">${t("version")}</p>
+        <h1>${t("homeTitle")}</h1>
+        <p class="lead">${t("homeLead")}</p>
+      </section>
+      <section class="role-card material" aria-labelledby="role-title">
+        <div class="role-icon" aria-hidden="true">${devicesIcon()}</div>
+        <div>
+          <h2 id="role-title">${t("roleTitle")}</h2>
+          <div class="role-pair"><span><b>1</b>${t("roleTarget")}</span><i aria-hidden="true">${arrowIcon()}</i><span><b>2</b>${t("roleController")}</span></div>
+          <p>${t("roleBody")}</p>
         </div>
-        <div class="host-orbit" aria-hidden="true"><span></span><i></i><b></b></div>
-      </article>
-      <article class="score-card ${snapshot ? healthClass(snapshot) : ""}">
-        <p class="eyebrow">READINESS</p>
-        <strong>${snapshot ? healthScore(snapshot) : "—"}</strong>
-        <span>${snapshot ? healthLabel(snapshot) : "Not checked"}</span>
-      </article>
-    </div>
-
-    <div class="section-heading"><div><p class="eyebrow">LAYERED STATE</p><h2>Do not blend these signals</h2></div><button id="status-plan" class="button secondary">Build plan</button></div>
-    <div class="status-grid">
-      ${statusCard("Platform", snapshot ? `${snapshot.platform} / ${snapshot.arch}` : "Unknown", Boolean(snapshot), "Host and WSL are always separate targets.", platformIcon())}
-      ${statusCard("Secure transport", snapshot?.tailscale.online ? `Online · ${snapshot.tailscale.ip ?? "Tailnet"}` : snapshot?.tailscale.installed ? "Installed · offline" : "Not detected", Boolean(snapshot?.tailscale.online), "Optional transport; SSH remains independently testable.", transportIcon())}
-      ${statusCard("SSH service", snapshot?.sshService.running ? `${snapshot.sshService.name ?? "sshd"} · running` : "Not running", Boolean(snapshot?.sshService.running), `Listener: ${snapshot?.sshPort ?? "—"}`, serviceIcon())}
-      ${statusCard("Firewall", snapshot?.firewall.provider ? `${snapshot.firewall.provider}` : "No provider detected", Boolean(snapshot?.firewall.ports?.length), snapshot?.firewall.ports?.length ? `Ports: ${snapshot.firewall.ports.join(", ")}` : "Port and scope are verified together.", firewallIcon())}
-      ${statusCard("Network sources", snapshot?.network.githubDns && snapshot?.network.tailscaleDns ? "DNS paths resolve" : "One or more paths unavailable", Boolean(snapshot?.network.githubDns && snapshot?.network.tailscaleDns), snapshot?.network.proxySet ? "Explicit proxy detected" : "No process proxy detected", networkIcon())}
-      ${statusCard("Configuration", snapshot?.sshConfigValid ? "Syntax valid" : "Needs verification", Boolean(snapshot?.sshConfigValid), "Verify stays read-only and does not elevate.", configIcon())}
-    </div>
-    ${renderWarnings(snapshot?.warnings)}
-  `;
-}
-
-function renderPlan(): string {
-  const plan = state.report?.plan;
-  const actions = plan?.actions ?? [];
-  return `
-    <div class="summary-strip">
-      ${metric("Actions", String(actions.length))}
-      ${metric("Highest risk", plan?.highestRisk ?? "—")}
-      ${metric("Self-cut", plan?.selfCutDetected ? "Detected" : "Clear")}
-      ${metric("Elevation", actions.some((action) => action.requiresElevation) ? "Required" : "No")}
-    </div>
-    <article class="panel material">
-      <div class="section-heading">
-        <div><p class="eyebrow">READ-ONLY DIFF</p><h2>${plan?.noChanges ? "Desired state already matches" : "What Apply would change"}</h2></div>
-        <button id="refresh-plan" class="button secondary">Refresh plan</button>
+      </section>
+      <div class="task-grid">
+        ${taskCard("setup", t("taskSetup"), t("taskSetupBody"), screenIcon(), true)}
+        ${taskCard("repair", t("taskRepair"), t("taskRepairBody"), repairIcon(), false)}
+        ${taskCard("advanced", t("taskAdvanced"), t("taskAdvancedBody"), slidersIcon(), false)}
       </div>
-      ${actions.length ? `<div class="action-list">${actions.map(actionRow).join("")}</div>` : emptyState("No plan yet", "Run Plan to compare the current host with your profile.")}
-      <div class="panel-footer">
-        <span>${plan?.selfCutDetected ? "A control-channel risk must be scheduled or externally verified." : "Apply remains locked until this exact diff is confirmed."}</span>
-        <button id="open-apply" class="button ${plan?.selfCutDetected ? "danger-button" : "primary"}" ${actions.length === 0 || state.busy ? "disabled" : ""}>Review & apply</button>
-      </div>
-    </article>
-    ${renderWarnings(plan?.warnings)}
-  `;
-}
-
-function renderProgress(): string {
-  const events = state.progress;
-  const results = state.report?.results ?? [];
-  return `
-    <article class="panel material">
-      <div class="section-heading"><div><p class="eyebrow">LIVE EXECUTION</p><h2>${state.busy ? "Working through the plan" : "Execution timeline"}</h2></div><span class="activity-dot ${state.busy ? "active" : ""}" aria-label="${state.busy ? "running" : "idle"}"></span></div>
-      <ol class="timeline">
-        ${events.length ? events.map((event) => `<li class="${escapeHtml(event.kind)}"><span></span><div><strong>${escapeHtml(event.actionId ?? event.kind)}</strong><p>${escapeHtml(event.message)}</p></div></li>`).join("") : `<li class="idle"><span></span><div><strong>No actions running</strong><p>Apply progress and servicing output will appear here.</p></div></li>`}
-      </ol>
-      ${results.length ? `<details class="log-details"><summary>Structured action results</summary><pre>${escapeHtml(JSON.stringify(results, null, 2))}</pre></details>` : ""}
-    </article>
-  `;
-}
-
-function renderVerify(): string {
-  const snapshot = state.report?.stage === "verify" ? state.report.snapshot : undefined;
-  const checks = [
-    ["Transport reachability", snapshot?.tailscale.online, snapshot?.tailscale.state ?? "Not verified"],
-    ["SSH client", snapshot?.sshClient.installed, snapshot?.sshClient.version ?? "Not verified"],
-    ["SSH service", snapshot?.sshService.running, snapshot?.sshService.name ?? "Not verified"],
-    ["Listener", Boolean(snapshot?.sshPort), snapshot?.sshPort ? `TCP ${snapshot.sshPort}` : "Not verified"],
-    ["Configuration syntax", snapshot?.sshConfigValid, snapshot?.sshConfigValid ? "Valid" : "Not verified"],
-    ["Firewall scope", Boolean(snapshot?.firewall.ports?.length), snapshot?.firewall.provider ?? "Not verified"]
-  ];
-  return `
-    <article class="panel material">
-      <div class="section-heading"><div><p class="eyebrow">NO ELEVATION</p><h2>Verify every layer independently</h2></div><button id="run-verify" class="button primary" ${state.busy ? "disabled" : ""}>Run verify</button></div>
-      <div class="verify-list">${checks.map(([label, ok, note]) => `<div><span class="verify-icon ${ok ? "pass" : "neutral"}">${ok ? checkIcon() : dotIcon()}</span><div><strong>${label}</strong><p>${escapeHtml(String(note))}</p></div><b>${ok ? "PASS" : "WAITING"}</b></div>`).join("")}</div>
-      <p class="boundary-note">A local Verify proves local state. A real connection test from another host is still required to prove routing, KEX, authentication, and the remote token.</p>
-    </article>
-  `;
-}
-
-function renderRecovery(): string {
-  return `
-    <div class="recovery-grid">
-      <article class="panel material">
-        <p class="eyebrow">ROLLBACK JOURNAL</p>
-        <h2>Reverse a recorded Apply</h2>
-        <p class="muted">Only reversible actions that completed are replayed, in reverse order.</p>
-        <label class="field"><span>Journal path</span><input id="journal-path" value="${escapeAttribute(state.report?.journalPath ?? "")}" placeholder="artifacts/apply-….journal.json" /></label>
-        <button id="run-rollback" class="button danger-button">Review rollback</button>
-      </article>
-      <article class="panel recovery-note">
-        <div class="dialog-icon warning">${warningIcon()}</div>
-        <p class="eyebrow">CONTROL CHANNEL</p>
-        <h2>Never restart your only way back in</h2>
-        <p>Use delayed actions, a second LAN/console path, and an external Verify target. Tailscale is transport—not proof that SSH is healthy.</p>
-      </article>
+      <footer class="privacy-foot"><span>${lockIcon()}</span>${t("noTelemetry")} · ${t("unsignedNotice")}</footer>
     </div>
+  `;
+}
+
+function taskCard(id: string, title: string, body: string, icon: string, recommended: boolean): string {
+  return `<button class="task-card material" data-task="${id}">${recommended ? `<span class="recommended">${t("recommended")}</span>` : ""}<span class="task-icon">${icon}</span><strong>${title}</strong><p>${body}</p><span class="task-arrow">${arrowIcon()}</span></button>`;
+}
+
+function renderWizard(): string {
+  return `
+    <div class="wizard-header">
+      <button class="text-button" id="wizard-back">${backIcon()} ${t("backHome")}</button>
+      <div><p class="eyebrow">${state.mode === "setup" ? t("wizardSetup") : t("wizardRepair")}</p><h1>${wizardTitle()}</h1></div>
+    </div>
+    ${renderStepper()}
+    <div class="wizard-content">
+      ${state.step === 0 ? renderCheckStep() : ""}
+      ${state.step === 1 ? renderRecommendationStep() : ""}
+      ${state.step === 2 ? renderInstallStep() : ""}
+      ${state.step === 3 ? renderTestStep() : ""}
+    </div>
+  `;
+}
+
+function wizardTitle(): string {
+  return [t("stepCheck"), t("stepRecommend"), t("stepInstall"), t("stepTest")][state.step] ?? t("stepCheck");
+}
+
+function renderStepper(): string {
+  return `<ol class="stepper" aria-label="${state.mode === "setup" ? t("wizardSetup") : t("wizardRepair")}">${[t("stepCheck"), t("stepRecommend"), t("stepInstall"), t("stepTest")].map((label, index) => `<li class="${index === state.step ? "active" : ""} ${index < state.step ? "done" : ""}" aria-current="${index === state.step ? "step" : "false"}"><span>${index < state.step ? checkIcon() : index + 1}</span><b>${label}</b></li>`).join("")}</ol>`;
+}
+
+function renderCheckStep(): string {
+  if (state.busy && !state.report) {
+    return `<article class="focus-card material loading-card"><span class="spinner" aria-hidden="true"></span><h2>${t("checking")}</h2><p>${t("checkBody")}</p></article>`;
+  }
+  const snapshot = state.report?.snapshot;
+  if (!snapshot) {
+    return `<article class="focus-card material"><div class="large-symbol">${searchIcon()}</div><h2>${t("stepCheck")}</h2><p>${t("checkBody")}</p><button id="run-check" class="button primary">${t("checkNow")}</button></article>`;
+  }
+  const missing = missingCount(snapshot);
+  const ready = missing === 0;
+  return `
+    ${resultBanner(ready ? "good" : "warn", ready ? t("ready") : t("missingSteps", { count: missing }), ready ? t("alreadyConfigured") : t("checkBody"))}
+    <div class="plain-grid">
+      ${plainCard(t("computer"), snapshot.hostname, `${snapshot.platform} · ${snapshot.arch}`, computerIcon())}
+      ${plainCard(t("permission"), snapshot.isAdministrator ? t("administrator") : t("standardUser"), "", userIcon())}
+      ${plainCard(t("secureNetwork"), snapshot.tailscale.online ? t("online") : t("unavailable"), snapshot.tailscale.ip ?? "", networkIcon())}
+      ${plainCard(t("sshService"), snapshot.sshService.running ? t("running") : t("notRunning"), snapshot.sshService.name ?? "", powerIcon())}
+    </div>
+    ${technicalDetails(state.report)}
+    <div class="wizard-actions"><button id="run-check" class="button secondary">${t("checkNow")}</button><button id="check-continue" class="button primary">${t("continue")}</button></div>
+  `;
+}
+
+function renderRecommendationStep(): string {
+  const snapshot = state.report?.snapshot;
+  const tailscaleNote = !snapshot?.tailscale.installed ? t("tailscaleMissing") : !snapshot.tailscale.online ? t("tailscaleOffline") : t("recommendationBody");
+  const selected = state.selectedKey?.publicKey ?? state.profile.ssh.publicKeys[0] ?? "";
+  return `
+    <article class="recommendation-card material">
+      <div class="recommend-icon">${shieldIcon()}</div>
+      <div><span class="recommended">${t("recommended")}</span><h2>${t("recommendationTitle")}</h2><p>${t("recommendationBody")}</p><aside class="info-note">${infoIcon()}<span>${tailscaleNote}</span></aside></div>
+    </article>
+    <article class="key-card material">
+      <div class="section-title"><div><p class="eyebrow">${t("roleController")}</p><h2>${t("keyTitle")}</h2><p>${t("keyExplain")}</p></div>${lockIcon()}</div>
+      ${state.detectedKeys.length ? `<div class="detected-keys"><strong>${t("foundKeys")}</strong><p>${t("foundKeysWarn")}</p>${state.detectedKeys.map((key, index) => `<label class="key-option"><input type="radio" name="controller-key" value="${index}" ${key.publicKey === selected ? "checked" : ""}/><span><b>${escapeHtml(key.label)}</b><small>${escapeHtml(fingerprintPreview(key.publicKey))}</small></span></label>`).join("")}</div>` : ""}
+      <label class="field"><span>${t("pasteKey")}</span><textarea id="public-key" rows="3" placeholder="${t("pastePlaceholder")}">${escapeHtml(selected)}</textarea></label>
+      <div class="key-actions"><button id="import-key" class="button secondary">${t("importKey")}</button><button id="generate-key" class="button secondary">${t("generateKey")}</button>${selected ? `<button id="export-pairing" class="button ghost">${t("exportPairing")}</button>` : ""}</div>
+      <p class="small-note">${t("generateExplain")}</p>
+      ${selected ? `<p class="success-note">${checkIcon()} ${t("keySelected")}</p>` : ""}
+      <p id="key-error" class="inline-error"></p>
+    </article>
+    <div class="wizard-actions"><button id="recommend-back" class="button secondary">${backIcon()} ${t("stepCheck")}</button><button id="use-recommended" class="button primary">${t("useRecommended")}</button></div>
+  `;
+}
+
+function renderInstallStep(): string {
+  if (state.installState === "waiting-for-permission" || state.installState === "running") {
+    const waiting = state.installState === "waiting-for-permission";
+    return `
+      <article class="focus-card material loading-card"><span class="spinner" aria-hidden="true"></span><h2>${waiting ? t("waitingUAC") : t("installing")}</h2><p>${waiting ? t("waitingUACBody") : t("installingBody")}</p>${renderFriendlyProgress()}</article>
+    `;
+  }
+  const plan = state.planReport?.plan;
+  if (!plan) {
+    return `<article class="focus-card material loading-card"><span class="spinner"></span><h2>${t("planLoading")}</h2><p>${t("planLead")}</p></article>`;
+  }
+  if (state.installState === "cancelled") {
+    return `${resultBanner("warn", t("noChanges"), t("cancelledUAC"))}${renderPlanBody(plan.actions, true)}`;
+  }
+  if (state.installState === "failed") {
+    return `${resultBanner("bad", t("installFailed"), t("installFailedBody"))}<article class="panel material"><p>${escapeHtml(state.installError || t("errorGeneric"))}</p>${technicalDetails(state.activeJob?.report)}</article>${renderPlanBody(plan.actions, true)}`;
+  }
+  if (plan.noChanges) {
+    return `${resultBanner("good", t("ready"), t("alreadyConfigured"))}<article class="focus-card material"><div class="large-symbol">${checkIcon()}</div><button id="test-now" class="button primary">${t("stepTest")}</button></article>`;
+  }
+  return renderPlanBody(plan.actions, false);
+}
+
+function renderPlanBody(actions: PlanAction[], retry: boolean): string {
+  return `
+    <article class="panel material">
+      <div class="section-title"><div><p class="eyebrow">${t("simpleSummary")}</p><h2>${t("planTitle")}</h2><p>${t("planLead")}</p></div><span class="count-pill">${t("actionCount", { count: actions.length })}</span></div>
+      <div class="human-actions">${actions.map(humanAction).join("")}</div>
+      <div class="access-summary">
+        <div><span>${packageIcon()}</span><small>${t("willInstall")}</small><b>${actions.some((action) => action.operation.includes("install")) ? "OpenSSH / Tailscale" : t("noChanges")}</b></div>
+        <div><span>${doorIcon()}</span><small>${t("willOpen")}</small><b>${t("port", { port: state.profile.ssh.port })}</b></div>
+        <div><span>${userIcon()}</span><small>${t("whoCanConnect")}</small><b>${t("selectedController")}</b></div>
+      </div>
+      ${actions.some((action) => action.selfCutRisk) ? `<aside class="danger-note">${warningIcon()}<span>${state.language === "zh-CN" ? "当前操作可能切断正在使用的远程连接。请到被连接电脑本地执行，或准备第二条连接后再继续。" : "This may interrupt the current remote connection. Run locally on the target or prepare a second path."}</span></aside>` : ""}
+      <details><summary>${t("technicalDetails")}</summary><pre>${escapeHtml(JSON.stringify(actions, null, 2))}</pre></details>
+    </article>
+    <div class="wizard-actions"><button id="plan-back" class="button secondary">${backIcon()} ${t("stepRecommend")}</button><button id="open-install" class="button primary">${retry ? t("retry") : t("safeInstall")}</button></div>
+  `;
+}
+
+function renderTestStep(): string {
+  if (state.busy) {
+    return `<article class="focus-card material loading-card"><span class="spinner"></span><h2>${t("testing")}</h2><p>${t("localVsRemote")}</p></article>`;
+  }
+  const report = state.verifyReport ?? state.report;
+  const snapshot = report?.snapshot;
+  const remaining = report?.plan?.actions.length ?? (report?.success ? 0 : 1);
+  const ready = Boolean(report?.success && remaining === 0);
+  const host = snapshot?.tailscale.ip || snapshot?.hostname || "HOST";
+  const user = state.language === "zh-CN" ? "你的用户名" : "YOUR_USER";
+  const command = `ssh -p ${state.profile.ssh.port} ${user}@${host}`;
+  return `
+    ${resultBanner(ready ? "good" : "warn", ready ? t("testReady") : t("testNeeds", { count: remaining }), ready ? t("testReadyBody") : t("testNeedsBody"))}
+    <article class="connection-card material">
+      <div class="connection-visual">${devicesIcon()}<span></span>${checkIcon()}</div>
+      <h2>${t("connectFromOther")}</h2>
+      <div class="connection-facts"><span><small>${t("host")}</small><b>${escapeHtml(snapshot?.hostname ?? "—")}</b></span><span><small>${t("address")}</small><b>${escapeHtml(snapshot?.tailscale.ip ?? "—")}</b></span><span><small>${t("willOpen")}</small><b>${state.profile.ssh.port}</b></span></div>
+      <div class="copy-box"><code>${escapeHtml(command)}</code><button id="copy-command" class="button secondary">${copyIcon()} ${t("copyCommand")}</button></div>
+      <aside class="info-note">${infoIcon()}<span>${t("nextDevice")}</span></aside>
+      <p class="boundary-note">${t("localVsRemote")}</p>
+      ${technicalDetails(report)}
+    </article>
+    <div class="wizard-actions"><button id="verify-again" class="button secondary">${t("checkNow")}</button><button id="finish" class="button primary">${t("startOver")}</button></div>
   `;
 }
 
 function renderAdvanced(): string {
   const p = state.profile;
   return `
+    <div class="wizard-header"><button class="text-button" id="advanced-back">${backIcon()} ${t("backHome")}</button><div><p class="eyebrow">${t("taskAdvanced")}</p><h1>${t("advancedTitle")}</h1><p>${t("advancedLead")}</p></div></div>
     <article class="panel material">
-      <div class="section-heading"><div><p class="eyebrow">PROFILE</p><h2>Common path first, sharp edges second</h2></div><span class="saved-indicator" id="saved-indicator">Changes stay local</span></div>
+      <div class="toolbar"><button id="import-profile" class="button secondary">${uploadIcon()} ${t("importProfile")}</button><button id="export-profile" class="button secondary">${downloadIcon()} ${t("exportProfile")}</button><button id="advanced-check" class="button secondary">${t("runCheck")}</button><button id="advanced-plan" class="button primary">${t("buildPlan")}</button></div>
       <div class="form-grid">
-        ${selectField("target-platform", "Target layer", p.target.platform, [["auto", "Auto detect"], ["windows", "Windows"], ["linux", "Linux"], ["macos", "macOS"], ["wsl", "WSL (separate)"]])}
-        ${numberField("ssh-port", "SSH port", p.ssh.port, 1, 65535)}
-        ${selectField("transport-mode", "Transport", p.transport.mode, [["tailnet", "Tailnet (recommended)"], ["lan", "LAN"], ["custom", "Custom"], ["none", "None"]])}
-        ${selectField("exposure-mode", "Exposure", p.exposure.mode, [["tailnet", "Tailnet only"], ["lan", "LAN"], ["custom", "Custom CIDRs"], ["none", "No firewall opening"]])}
-        ${selectField("download-strategy", "Download source", p.download.strategy, [["official", "Official release"], ["package-manager", "System package manager"], ["mirror", "Explicit trusted mirror"], ["proxy", "Explicit proxy"], ["offline", "Offline bundle"], ["cache", "Verified cache"]])}
-        ${numberField("download-retries", "Retries", p.download.retries, 0, 10)}
+        ${selectField("target-platform", t("targetPlatform"), p.target.platform, [["auto", "Auto"], ["windows", "Windows"], ["linux", "Linux"], ["macos", "macOS"], ["wsl", "WSL"]])}
+        ${numberField("ssh-port", t("sshPort"), p.ssh.port, 1, 65535)}
+        ${selectField("transport-mode", t("transport"), p.transport.mode, [["tailnet", "Tailscale"], ["lan", "LAN"], ["custom", "Custom"], ["none", "None"]])}
+        ${selectField("exposure-mode", t("exposure"), p.exposure.mode, [["tailnet", "Tailnet only"], ["lan", "LAN"], ["custom", "Custom"], ["none", "None"]])}
+        ${selectField("download-strategy", t("downloadSource"), p.download.strategy, [["official", "Official"], ["package-manager", "Package manager"], ["mirror", "Mirror"], ["proxy", "Proxy"], ["offline", "Offline"], ["cache", "Cache"]])}
       </div>
-      <details class="advanced-details">
-        <summary>Safety and authentication</summary>
-        <div class="detail-content">
-          <label class="field full"><span>Controller public keys (one per line)</span><textarea id="public-keys" rows="5" placeholder="ssh-ed25519 AAAA… controller">${escapeHtml(p.ssh.publicKeys.join("\n"))}</textarea><small>Private keys and tokens are rejected by the core.</small></label>
-          <label class="check-row"><input id="prevent-self-cut" type="checkbox" ${p.safety.preventSelfCut ? "checked" : ""} /><span>Block active-channel self-cut</span></label>
-          <label class="check-row"><input id="auto-rollback" type="checkbox" ${p.safety.autoRollback ? "checked" : ""} /><span>Rollback completed reversible actions after partial failure</span></label>
-          <label class="check-row"><input id="password-auth" type="checkbox" ${p.ssh.passwordAuthentication ? "checked" : ""} /><span>Allow password authentication (not recommended)</span></label>
-        </div>
-      </details>
-      <div class="panel-footer"><span>Profiles contain intent, never private keys, tokens, real device logs, or credentials.</span><button id="save-profile" class="button primary">Use this profile</button></div>
+      <label class="field"><span>${t("publicKeys")}</span><textarea id="advanced-keys" rows="5">${escapeHtml(p.ssh.publicKeys.join("\n"))}</textarea></label>
+      <label class="check-row"><input id="prevent-self-cut" type="checkbox" ${p.safety.preventSelfCut ? "checked" : ""}/><span>${state.language === "zh-CN" ? "阻止可能切断当前远程连接的操作" : "Block changes that may cut the current remote connection"}</span></label>
+      <label class="check-row"><input id="auto-rollback" type="checkbox" ${p.safety.autoRollback ? "checked" : ""}/><span>${state.language === "zh-CN" ? "失败时自动恢复已完成的可恢复步骤" : "Automatically roll back completed reversible steps after failure"}</span></label>
+      <div class="panel-footer"><span id="advanced-status">${t("noTelemetry")}</span><button id="save-advanced" class="button primary">${t("saveAdvanced")}</button></div>
+      ${state.report ? technicalDetails(state.report) : ""}
     </article>
+    <article class="panel material recovery-panel">
+      <div><p class="eyebrow">${t("recoveryTitle")}</p><h2>${t("recoveryTitle")}</h2><p>${t("uninstallChoice")}</p></div>
+      <div class="toolbar"><button id="rollback-last" class="button secondary" ${state.report?.journalPath ? "" : "disabled"}>${t("rollbackLast")}</button><button class="button secondary" disabled title="${state.language === "zh-CN" ? "需要先有由 v0.2.0 创建的管理记录" : "Requires a v0.2.0 managed-state record"}">${t("stopManaged")}</button><button id="export-report-advanced" class="button secondary">${t("exportReport")}</button><button id="check-update" class="button secondary">${t("updateCheck")}</button></div>
+      <p class="small-note">${t("reportPrivacy")}</p>
+    </article>
+    <aside class="unsigned-banner">${warningIcon()}<span>${t("unsignedNotice")}</span></aside>
   `;
 }
 
-function bindPlanEvents(): void {
-  document.querySelector("#refresh-plan")?.addEventListener("click", () => runStage("plan"));
-  document.querySelector("#open-apply")?.addEventListener("click", openApplyDialog);
-}
-
-function bindRecoveryEvents(): void {
-  document.querySelector("#run-rollback")?.addEventListener("click", async () => {
-    const path = document.querySelector<HTMLInputElement>("#journal-path")!.value.trim();
-    if (!path) {
-      announce("Enter a journal path first.");
+function bindPageEvents(): void {
+  document.querySelectorAll<HTMLElement>("[data-task]").forEach((button) => button.addEventListener("click", () => {
+    const task = button.dataset.task;
+    if (task === "advanced") {
+      state.view = "advanced";
+      renderPage();
       return;
     }
-    if (!window.go?.main?.App) {
-      announce("Rollback is only available in the native app.");
-      return;
-    }
-    state.busy = true;
-    try {
-      state.report = await window.go.main.App.Rollback(path);
-      state.activeView = "progress";
-      syncNavigation();
-    } catch (error) {
-      announce(errorMessage(error));
-    } finally {
-      state.busy = false;
-      render();
+    startWizard(task === "repair" ? "repair" : "setup");
+  }));
+  document.querySelector("#wizard-back")?.addEventListener("click", goHome);
+  document.querySelector("#advanced-back")?.addEventListener("click", goHome);
+  document.querySelector("#run-check")?.addEventListener("click", () => void runCheck());
+  document.querySelector("#check-continue")?.addEventListener("click", () => { state.step = 1; renderPage(); });
+  document.querySelector("#recommend-back")?.addEventListener("click", () => { state.step = 0; renderPage(); });
+  document.querySelectorAll<HTMLInputElement>('input[name="controller-key"]').forEach((input) => input.addEventListener("change", () => {
+    state.selectedKey = state.detectedKeys[Number(input.value)];
+    if (state.selectedKey) state.profile.ssh.publicKeys = [state.selectedKey.publicKey];
+    renderPage();
+  }));
+  document.querySelector<HTMLTextAreaElement>("#public-key")?.addEventListener("input", (event) => {
+    const value = (event.currentTarget as HTMLTextAreaElement).value.trim();
+    if (value) {
+      state.selectedKey = { label: t("pasteKey"), path: "", publicKey: value, generated: false };
+      state.profile.ssh.publicKeys = [value];
     }
   });
+  document.querySelector("#import-key")?.addEventListener("click", () => void importPublicKey());
+  document.querySelector("#generate-key")?.addEventListener("click", () => void generatePublicKey());
+  document.querySelector("#export-pairing")?.addEventListener("click", () => void exportPairing());
+  document.querySelector("#use-recommended")?.addEventListener("click", () => void useRecommended());
+  document.querySelector("#plan-back")?.addEventListener("click", () => { state.step = 1; state.installState = "idle"; renderPage(); });
+  document.querySelector("#open-install")?.addEventListener("click", openInstallDialog);
+  document.querySelector("#test-now")?.addEventListener("click", () => void runVerify());
+  document.querySelector("#verify-again")?.addEventListener("click", () => void runVerify());
+  document.querySelector("#copy-command")?.addEventListener("click", copyConnectionCommand);
+  document.querySelector("#finish")?.addEventListener("click", goHome);
+  document.querySelector("#import-profile")?.addEventListener("click", () => void importProfile());
+  document.querySelector("#export-profile")?.addEventListener("click", () => void exportProfile());
+  document.querySelector("#save-advanced")?.addEventListener("click", saveAdvanced);
+  document.querySelector("#advanced-check")?.addEventListener("click", () => void runAdvancedStage("check"));
+  document.querySelector("#advanced-plan")?.addEventListener("click", () => void runAdvancedStage("plan"));
+  document.querySelector("#export-report-advanced")?.addEventListener("click", () => void exportReport());
+  document.querySelector("#check-update")?.addEventListener("click", () => void checkForUpdate());
+  document.querySelector("#rollback-last")?.addEventListener("click", () => void rollbackLast());
 }
 
-function bindAdvancedEvents(): void {
-  document.querySelector("#save-profile")?.addEventListener("click", () => {
-    state.profile.target.platform = valueOf("target-platform");
-    state.profile.ssh.port = Number(valueOf("ssh-port"));
-    state.profile.transport.mode = valueOf("transport-mode");
-    state.profile.exposure.mode = valueOf("exposure-mode");
-    state.profile.download.strategy = valueOf("download-strategy");
-    state.profile.download.retries = Number(valueOf("download-retries"));
-    state.profile.ssh.publicKeys = valueOf("public-keys").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-    state.profile.safety.preventSelfCut = checked("prevent-self-cut");
-    state.profile.safety.autoRollback = checked("auto-rollback");
-    state.profile.ssh.passwordAuthentication = checked("password-auth");
-    setText("#saved-indicator", "Profile active");
-    announce("Profile updated locally.");
-  });
+function startWizard(mode: WizardMode): void {
+  state.view = "wizard";
+  state.mode = mode;
+  state.step = 0;
+  state.report = undefined;
+  state.planReport = undefined;
+  state.verifyReport = undefined;
+  state.progress = [];
+  state.installState = "idle";
+  state.installError = "";
+  renderPage();
+  void runCheck();
 }
 
-async function runStage(stage: Stage, confirmed = false, scheduleRisky = false, externalVerify = ""): Promise<void> {
+async function runCheck(): Promise<void> {
   if (state.busy) return;
   state.busy = true;
-  state.progress = stage === "apply" ? [] : state.progress;
-  announce(`${stage} started.`);
-  refreshBusyControls();
-  const request: DesktopRequest = { stage, profile: state.profile, confirmed, allowSelfCut: false, scheduleRisky, externalVerify };
+  renderPage();
   try {
-    state.report = window.go?.main?.App ? await window.go.main.App.Run(request) : await mockRun(request);
-    announce(`${stage} ${state.report.success ? "completed" : "needs attention"}.`);
-    if (stage === "apply") {
-      state.activeView = "progress";
-      syncNavigation();
-    } else if (stage === "plan") {
-      state.activeView = "plan";
-      syncNavigation();
-    } else if (stage === "verify") {
-      state.activeView = "verify";
-      syncNavigation();
-    }
+    state.report = await runStage("check");
   } catch (error) {
-    announce(errorMessage(error));
+    state.toast = friendlyError(error);
   } finally {
     state.busy = false;
-    refreshBusyControls();
-    document.querySelector<HTMLButtonElement>("#export-report")!.disabled = !state.report;
-    render(true);
+    renderPage();
   }
 }
 
-function openApplyDialog(): void {
-  const actions = state.report?.plan?.actions ?? [];
-  if (!actions.length) return;
-  setText("#apply-summary", `${actions.length} action${actions.length === 1 ? "" : "s"} will change this host. Review each layer.`);
-  document.querySelector("#apply-actions")!.innerHTML = actions.map((action) => `<div><span class="risk ${action.risk}">${action.risk}</span><div><strong>${escapeHtml(action.summary)}</strong><p>${escapeHtml(action.reason)}</p></div></div>`).join("");
-  const ack = document.querySelector<HTMLInputElement>("#apply-ack")!;
+async function useRecommended(): Promise<void> {
+  const textarea = document.querySelector<HTMLTextAreaElement>("#public-key");
+  const key = textarea?.value.trim() || state.selectedKey?.publicKey || state.profile.ssh.publicKeys[0];
+  if (!key || key.includes("PRIVATE KEY") || !key.startsWith("ssh-")) {
+    const error = document.querySelector<HTMLElement>("#key-error");
+    if (error) error.textContent = t("keyRequired");
+    return;
+  }
+  state.profile.ssh.publicKeys = [key];
+  state.profile.ssh.passwordAuthentication = false;
+  state.profile.transport.mode = "tailnet";
+  state.profile.exposure.mode = "tailnet";
+  state.profile.transport.install = !state.report?.snapshot?.tailscale.installed;
+  state.step = 2;
+  state.busy = true;
+  renderPage();
+  try {
+    state.planReport = await runStage("plan");
+  } catch (error) {
+    state.installState = "failed";
+    state.installError = friendlyError(error);
+  } finally {
+    state.busy = false;
+    renderPage();
+  }
+}
+
+function openInstallDialog(): void {
+  const actions = state.planReport?.plan?.actions ?? [];
+  document.querySelector("#confirm-actions")!.innerHTML = actions.map((action) => `<div><span>${humanActionIcon(action)}</span><div><strong>${humanActionLabel(action)}</strong><p>${humanReason(action)}</p></div></div>`).join("");
+  const ack = document.querySelector<HTMLInputElement>("#confirm-ack")!;
   ack.checked = false;
-  document.querySelector<HTMLButtonElement>("#confirm-apply")!.disabled = true;
-  const dialog = document.querySelector<HTMLDialogElement>("#apply-dialog")!;
-  dialog.showModal();
+  document.querySelector<HTMLButtonElement>("#confirm-install")!.disabled = true;
+  document.querySelector<HTMLDialogElement>("#install-dialog")!.showModal();
   requestAnimationFrame(() => ack.focus());
 }
 
-async function exportReport(): Promise<void> {
-  if (!state.report) return;
-  if (window.go?.main?.App) {
-    const path = await window.go.main.App.ExportReport(state.report);
-    announce(path ? `Report exported to ${path}` : "Export cancelled.");
+async function beginSafeInstall(): Promise<void> {
+  state.installState = "waiting-for-permission";
+  state.installError = "";
+  state.progress = [];
+  renderPage();
+  const request: DesktopRequest = { stage: "apply", profile: state.profile, confirmed: true, allowSelfCut: false, scheduleRisky: false, externalVerify: "" };
+  try {
+    if (window.go?.main?.App) {
+      state.activeJob = await window.go.main.App.BeginElevatedApply(request);
+      await pollElevatedJob(state.activeJob.id);
+    } else {
+      state.activeJob = await mockElevatedApply(request);
+      finishElevatedJob(state.activeJob);
+    }
+  } catch (error) {
+    state.installState = "failed";
+    state.installError = friendlyError(error);
+    renderPage();
+  }
+}
+
+async function pollElevatedJob(id: string): Promise<void> {
+  while (true) {
+    const job = await window.go!.main!.App!.ElevatedApplyStatus(id);
+    state.activeJob = job;
+    state.progress = job.events ?? [];
+    state.installState = job.state === "waiting-for-permission" ? "waiting-for-permission" : job.state === "running" ? "running" : job.state;
+    renderPage();
+    if (["completed", "failed", "cancelled"].includes(job.state)) {
+      finishElevatedJob(job);
+      await window.go!.main!.App!.DismissElevatedJob(id);
+      return;
+    }
+    await delay(500);
+  }
+}
+
+function finishElevatedJob(job: ElevatedJob): void {
+  if (job.state === "cancelled") {
+    state.installState = "cancelled";
+    state.installError = job.error ?? t("cancelledUAC");
+    renderPage();
     return;
   }
-  const blob = new Blob([JSON.stringify(state.report, null, 2)], { type: "application/json" });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = `${state.report.id}.report.json`;
-  link.click();
-  URL.revokeObjectURL(link.href);
+  if (job.state === "failed" || !job.report?.success) {
+    state.installState = "failed";
+    state.installError = job.error ?? job.report?.error ?? t("errorGeneric");
+    renderPage();
+    return;
+  }
+  state.installState = "completed";
+  state.report = job.report;
+  localStorage.setItem("ssh-launchpad-demo-ready", "true");
+  void runVerify();
+}
+
+async function runVerify(): Promise<void> {
+  state.step = 3;
+  state.busy = true;
+  renderPage();
+  try {
+    state.verifyReport = await runStage("verify");
+  } catch (error) {
+    state.verifyReport = state.activeJob?.report;
+    state.toast = friendlyError(error);
+  } finally {
+    state.busy = false;
+    renderPage();
+  }
+}
+
+async function runStage(stage: Stage): Promise<Report> {
+  const request: DesktopRequest = { stage, profile: state.profile, confirmed: false, allowSelfCut: false, scheduleRisky: false, externalVerify: "" };
+  return window.go?.main?.App ? window.go.main.App.Run(request) : mockRun(request);
+}
+
+async function runAdvancedStage(stage: "check" | "plan"): Promise<void> {
+  saveAdvanced();
+  state.busy = true;
+  try {
+    state.report = await runStage(stage);
+    showToast(stage === "check" ? t("runCheck") : t("buildPlan"));
+  } catch (error) {
+    showToast(friendlyError(error));
+  } finally {
+    state.busy = false;
+    renderPage();
+  }
+}
+
+async function importPublicKey(): Promise<void> {
+  try {
+    if (window.go?.main?.App) {
+      const key = await window.go.main.App.ImportPublicKey();
+      if (key.publicKey) selectKey(key);
+    } else {
+      document.querySelector<HTMLInputElement>("#key-file")!.click();
+    }
+  } catch (error) {
+    showToast(friendlyError(error));
+  }
+}
+
+async function generatePublicKey(): Promise<void> {
+  try {
+    const key = window.go?.main?.App ? await window.go.main.App.GenerateControllerKey("ssh-launchpad-controller") : mockPublicKey(true);
+    selectKey(key);
+    showToast(t("keySelected"));
+  } catch (error) {
+    showToast(friendlyError(error));
+  }
+}
+
+function selectKey(key: PublicKeyInfo): void {
+  state.selectedKey = key;
+  state.profile.ssh.publicKeys = [key.publicKey];
+  if (!state.detectedKeys.some((existing) => existing.publicKey === key.publicKey)) state.detectedKeys.push(key);
+  renderPage();
+}
+
+async function exportPairing(): Promise<void> {
+  const key = state.selectedKey?.publicKey ?? state.profile.ssh.publicKeys[0];
+  if (!key) return;
+  if (window.go?.main?.App) {
+    const path = await window.go.main.App.ExportPairingFile(key);
+    if (path) showToast(path);
+  } else {
+    downloadText("ssh-launchpad-controller.pub", `${key}\n`, "text/plain;charset=utf-8");
+    showToast(t("exportPairing"));
+  }
+}
+
+async function importProfile(): Promise<void> {
+  try {
+    if (window.go?.main?.App) {
+      const profile = await window.go.main.App.ImportProfile();
+      if (profile.schemaVersion) {
+        state.profile = profile;
+        state.selectedKey = profile.ssh.publicKeys[0] ? { label: t("profileImported"), path: "", publicKey: profile.ssh.publicKeys[0], generated: false } : undefined;
+        showToast(t("profileImported"));
+        renderPage();
+      }
+    } else {
+      document.querySelector<HTMLInputElement>("#profile-file")!.click();
+    }
+  } catch (error) {
+    showToast(friendlyError(error));
+  }
+}
+
+async function exportProfile(): Promise<void> {
+  saveAdvanced();
+  if (window.go?.main?.App) {
+    const path = await window.go.main.App.ExportProfile(state.profile);
+    if (path) showToast(t("profileExported"));
+    return;
+  }
+  downloadText(`${state.profile.name}.ssh-launchpad.yaml`, profileToYAML(state.profile), "text/yaml;charset=utf-8");
+  showToast(t("profileExported"));
+}
+
+function saveAdvanced(): void {
+  const platform = document.querySelector<HTMLSelectElement>("#target-platform");
+  if (!platform) return;
+  state.profile.target.platform = platform.value;
+  state.profile.ssh.port = Number(valueOf("ssh-port"));
+  state.profile.transport.mode = valueOf("transport-mode");
+  state.profile.exposure.mode = valueOf("exposure-mode");
+  state.profile.download.strategy = valueOf("download-strategy");
+  state.profile.ssh.publicKeys = valueOf("advanced-keys").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  state.profile.safety.preventSelfCut = checked("prevent-self-cut");
+  state.profile.safety.autoRollback = checked("auto-rollback");
+  setText("#advanced-status", t("advancedSaved"));
+  announce(t("advancedSaved"));
+}
+
+async function exportReport(): Promise<void> {
+  if (!state.report) {
+    showToast(t("noChanges"));
+    return;
+  }
+  if (window.go?.main?.App) {
+    const path = await window.go.main.App.ExportReport(state.report);
+    if (path) showToast(path);
+  } else {
+    downloadText(`${state.report.id}.report.json`, `${JSON.stringify(redactReport(state.report), null, 2)}\n`, "application/json;charset=utf-8");
+  }
+}
+
+async function checkForUpdate(): Promise<void> {
+  try {
+    const info = window.go?.main?.App
+      ? await window.go.main.App.CheckForUpdate()
+      : await fetch("https://api.github.com/repos/Shallow-dusty/ssh-launchpad/releases/latest")
+        .then(async (response) => {
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const value = await response.json() as { tag_name: string; html_url: string };
+          const latest = value.tag_name.replace(/^v/, "");
+          return { currentVersion: "0.2.0", latestVersion: latest, available: isNewerVersion(latest, "0.2.0"), url: value.html_url, channel: "stable" };
+        });
+    if (info.available) {
+      const message = state.language === "zh-CN"
+        ? `发现稳定版 ${info.latestVersion}。只打开下载页，不会静默更新系统组件。`
+        : `Stable ${info.latestVersion} is available. Only the download page will open; system components are never silently updated.`;
+      showToast(message);
+      window.open(info.url, "_blank", "noopener,noreferrer");
+    } else {
+      showToast(state.language === "zh-CN" ? "当前已是最新稳定版。" : "You have the latest stable version.");
+    }
+  } catch (error) {
+    showToast(friendlyError(error));
+  }
+}
+
+function isNewerVersion(candidate: string, current: string): boolean {
+  const parse = (value: string) => value.replace(/^v/, "").split(".").slice(0, 3).map((part) => Number(part.split("-")[0] ?? 0) || 0);
+  const left = parse(candidate);
+  const right = parse(current);
+  for (let index = 0; index < 3; index++) {
+    if ((left[index] ?? 0) !== (right[index] ?? 0)) return (left[index] ?? 0) > (right[index] ?? 0);
+  }
+  return false;
+}
+
+async function rollbackLast(): Promise<void> {
+  if (!state.report?.journalPath || !window.go?.main?.App) return;
+  if (!confirm(t("rollbackLast"))) return;
+  try {
+    const report = await window.go.main.App.Rollback(state.report.journalPath);
+    state.report = report;
+    showToast(report.success ? t("ready") : t("errorGeneric"));
+    renderPage();
+  } catch (error) {
+    showToast(friendlyError(error));
+  }
+}
+
+function importProfileFromBrowser(event: Event): void {
+  const file = (event.currentTarget as HTMLInputElement).files?.[0];
+  if (!file) return;
+  void file.text().then((text) => {
+    try {
+      const profile = JSON.parse(text) as Profile;
+      if (profile.schemaVersion !== 1) throw new Error("schemaVersion");
+      state.profile = profile;
+      showToast(t("profileImported"));
+      renderPage();
+    } catch {
+      showToast(state.language === "zh-CN" ? "浏览器预览仅导入 JSON；桌面应用支持 YAML 和 JSON。" : "Browser preview imports JSON; the desktop app supports YAML and JSON.");
+    }
+  });
+}
+
+function importKeyFromBrowser(event: Event): void {
+  const file = (event.currentTarget as HTMLInputElement).files?.[0];
+  if (!file) return;
+  void file.text().then((text) => {
+    if (text.includes("PRIVATE KEY")) {
+      showToast(state.language === "zh-CN" ? "拒绝导入私钥。请选择 .pub 公钥文件。" : "Private keys are rejected. Choose a .pub file.");
+      return;
+    }
+    const key = text.split(/\r?\n/).map((line) => line.trim()).find((line) => line.startsWith("ssh-"));
+    if (key) selectKey({ label: file.name, path: file.name, publicKey: key, generated: false });
+  });
+}
+
+async function copyConnectionCommand(): Promise<void> {
+  const code = document.querySelector<HTMLElement>(".copy-box code")?.textContent ?? "";
+  await navigator.clipboard.writeText(code);
+  showToast(t("copied"));
+}
+
+function goHome(): void {
+  state.view = "home";
+  state.step = 0;
+  state.installState = "idle";
+  state.installError = "";
+  renderPage();
+}
+
+function resultBanner(kind: "good" | "warn" | "bad", title: string, body: string): string {
+  const icon = kind === "good" ? checkIcon() : kind === "warn" ? warningIcon() : closeIcon();
+  return `<section class="result-banner ${kind}" role="status"><span>${icon}</span><div><p>${t("simpleSummary")}</p><h2>${title}</h2><p>${body}</p></div></section>`;
+}
+
+function plainCard(label: string, value: string, note: string, icon: string): string {
+  return `<article class="plain-card material"><span>${icon}</span><div><small>${label}</small><strong>${escapeHtml(value)}</strong>${note ? `<p>${escapeHtml(note)}</p>` : ""}</div></article>`;
+}
+
+function technicalDetails(report?: Report): string {
+  if (!report) return "";
+  return `<details class="technical-details"><summary>${t("details")}</summary><div class="detail-grid">${report.snapshot ? `<div><b>${t("system")}</b><pre>${escapeHtml(JSON.stringify(report.snapshot, null, 2))}</pre></div>` : ""}${report.plan ? `<div><b>${t("rawReport")}</b><pre>${escapeHtml(JSON.stringify(report.plan, null, 2))}</pre></div>` : ""}</div></details>`;
+}
+
+function humanAction(action: PlanAction): string {
+  return `<div class="human-action"><span>${humanActionIcon(action)}</span><div><strong>${humanActionLabel(action)}</strong><p>${humanReason(action)}</p></div><b>${action.requiresElevation ? shieldIcon() : checkIcon()}</b></div>`;
+}
+
+function humanActionLabel(action: PlanAction): string {
+  const keys: Record<string, MessageKey> = {
+    install_ssh: "installSSH",
+    configure_sshd: "configureSSH",
+    configure_keys: "configureKeys",
+    enable_sshd: "enableSSH",
+    configure_firewall: "configureFirewall",
+    install_tailscale: "installTailscale"
+  };
+  const key = keys[action.operation];
+  return key ? t(key) : t("manualAction");
+}
+
+function humanReason(action: PlanAction): string {
+  if (action.operation === "configure_firewall") return `${t("safeNetworkOnly")} · ${t("port", { port: state.profile.ssh.port })}`;
+  if (action.operation === "configure_keys") return t("keySelected");
+  return state.language === "zh-CN" ? "当前状态与推荐设置不同，需要完成这一项。" : "The current state differs from the recommended setup.";
+}
+
+function humanActionIcon(action: PlanAction): string {
+  if (action.layer === "firewall") return shieldIcon();
+  if (action.layer === "authentication") return keyIcon();
+  if (action.layer === "transport") return networkIcon();
+  if (action.layer === "ssh-service") return powerIcon();
+  return packageIcon();
+}
+
+function renderFriendlyProgress(): string {
+  if (!state.progress.length) return `<p class="progress-note">${state.installState === "waiting-for-permission" ? t("waitingUACBody") : t("installingBody")}</p>`;
+  return `<ol class="friendly-progress">${state.progress.map((event) => `<li class="${event.kind}"><span>${event.kind === "completed" ? checkIcon() : `<i></i>`}</span><div><b>${event.actionId ? humanActionLabel({ operation: operationFromID(event.actionId) } as PlanAction) : t("installing")}</b><p>${simpleEvent(event)}</p></div></li>`).join("")}</ol>`;
+}
+
+function operationFromID(id: string): string {
+  return ({ "install-ssh": "install_ssh", "configure-sshd": "configure_sshd", "configure-authorized-keys": "configure_keys", "enable-sshd": "enable_sshd", "configure-firewall": "configure_firewall", "install-tailscale": "install_tailscale" } as Record<string, string>)[id] ?? id;
+}
+
+function simpleEvent(event: { kind: string; message: string; actionId?: string }): string {
+  if (event.kind === "started") return state.language === "zh-CN" ? "正在处理" : "In progress";
+  if (event.kind === "completed") return state.language === "zh-CN" ? "已完成" : "Completed";
+  if (event.kind === "error") return state.language === "zh-CN" ? "没有完成，已停止后续步骤" : "Did not finish; later steps stopped";
+  return event.message;
+}
+
+function missingCount(snapshot: Snapshot): number {
+  return [snapshot.sshServer.installed, snapshot.sshService.running, snapshot.sshConfigValid, snapshot.tailscale.online, snapshot.firewall.ports?.includes(state.profile.ssh.port)].filter((value) => !value).length;
 }
 
 async function mockRun(request: DesktopRequest): Promise<Report> {
-  await delay(240);
+  await delay(180);
+  const configured = localStorage.getItem("ssh-launchpad-demo-ready") === "true";
   const snapshot: Snapshot = {
-    platform: request.profile.target.platform === "auto" ? "windows" : request.profile.target.platform,
+    platform: "windows",
     arch: "amd64",
-    hostname: "DEMO-HOST",
+    hostname: "HOME-PC",
     isAdministrator: false,
     sessionTransport: "local",
     packageManager: "winget",
     sshClient: { installed: true, version: "OpenSSH_9.x" },
-    sshServer: { installed: true },
-    sshService: { name: "sshd", installed: true, running: false, startPolicy: "Manual" },
-    sshPort: 22,
+    sshServer: { installed: configured },
+    sshService: { name: "sshd", installed: configured, running: configured, startPolicy: configured ? "Automatic" : "Manual" },
+    sshPort: configured ? request.profile.ssh.port : 0,
     sshConfigValid: true,
-    firewall: { provider: "windows-firewall", ports: [], scopes: [] },
-    tailscale: { installed: true, online: true, ip: "100.64.0.10", state: "Running" },
+    firewall: { provider: "windows-firewall", ports: configured ? [request.profile.ssh.port] : [], scopes: configured ? ["100.64.0.0/10", "fd7a:115c:a1e0::/48"] : [] },
+    tailscale: { installed: true, online: true, ip: "100.64.10.25", state: "Running" },
     network: { githubDns: true, tailscaleDns: true, proxySet: false }
   };
-  const actions: PlanAction[] = [
-    { id: "enable-sshd", operation: "enable_sshd", layer: "ssh-service", risk: "medium", summary: "Enable and start the SSH service", reason: "The service is installed but not running.", mutating: true, requiresElevation: true, selfCutRisk: false, reversible: true },
-    { id: "configure-firewall", operation: "configure_firewall", layer: "firewall", risk: "high", summary: `Allow TCP ${request.profile.ssh.port} from Tailnet only`, reason: "No port-and-scope-aware rule matches.", mutating: true, requiresElevation: true, selfCutRisk: false, reversible: true }
+  const actions = configured ? [] : mockActions(request.profile.ssh.port);
+  return {
+    id: `${request.stage}-${Date.now()}`,
+    stage: request.stage,
+    success: request.stage !== "verify" || configured,
+    exitCode: request.stage === "verify" && !configured ? 3 : 0,
+    profileName: request.profile.name,
+    snapshot,
+    plan: { noChanges: actions.length === 0, highestRisk: actions.length ? "high" : "low", selfCutDetected: false, actions }
+  };
+}
+
+async function mockElevatedApply(request: DesktopRequest): Promise<ElevatedJob> {
+  await delay(250);
+  const mode = new URLSearchParams(location.search).get("mock");
+  const attempt = Number(sessionStorage.getItem("ssh-launchpad-mock-attempt") ?? "0") + 1;
+  sessionStorage.setItem("ssh-launchpad-mock-attempt", String(attempt));
+  if (mode === "uac-cancel" && attempt === 1) return { id: "mock", state: "cancelled", error: t("cancelledUAC") };
+  if (mode === "fail" && attempt === 1) return { id: "mock", state: "failed", error: state.language === "zh-CN" ? "模拟：网络中断，校验失败，电脑没有继续改动。" : "Simulated network interruption; verification failed and later changes stopped." };
+  state.installState = "running";
+  for (const action of mockActions(request.profile.ssh.port)) {
+    state.progress.push({ kind: "started", actionId: action.id, message: action.summary });
+    renderPage();
+    await delay(140);
+    state.progress.push({ kind: "completed", actionId: action.id, message: "completed" });
+    renderPage();
+  }
+  localStorage.setItem("ssh-launchpad-demo-ready", "true");
+  const report = await mockRun({ ...request, stage: "apply" });
+  report.success = true;
+  report.exitCode = 0;
+  report.results = mockActions(request.profile.ssh.port).map((action) => ({ actionId: action.id, status: "completed" }));
+  return { id: "mock", state: "completed", report };
+}
+
+function mockActions(port: number): PlanAction[] {
+  return [
+    { id: "install-ssh", operation: "install_ssh", layer: "ssh-packages", risk: "medium", summary: "Install OpenSSH", reason: "", mutating: true, requiresElevation: true, selfCutRisk: false, reversible: false },
+    { id: "configure-sshd", operation: "configure_sshd", layer: "ssh-config", risk: "high", summary: "Configure SSH", reason: "", mutating: true, requiresElevation: true, selfCutRisk: false, reversible: true },
+    { id: "configure-authorized-keys", operation: "configure_keys", layer: "authentication", risk: "high", summary: "Add controller key", reason: "", mutating: true, requiresElevation: true, selfCutRisk: false, reversible: true },
+    { id: "enable-sshd", operation: "enable_sshd", layer: "ssh-service", risk: "medium", summary: "Start service", reason: "", mutating: true, requiresElevation: true, selfCutRisk: false, reversible: true },
+    { id: "configure-firewall", operation: "configure_firewall", layer: "firewall", risk: "high", summary: `Allow ${port}`, reason: "", mutating: true, requiresElevation: true, selfCutRisk: false, reversible: true }
   ];
-  if (request.stage === "apply") {
-    for (const action of actions) {
-      state.progress.push({ kind: "started", actionId: action.id, message: action.summary });
-      render();
-      await delay(260);
-      state.progress.push({ kind: "completed", actionId: action.id, message: "completed" });
-    }
-    return { id: `apply-${Date.now()}`, stage: "apply", success: true, exitCode: 0, profileName: request.profile.name, snapshot, plan: { noChanges: false, highestRisk: "high", selfCutDetected: false, actions }, results: actions.map((action) => ({ actionId: action.id, status: "completed" })), journalPath: "artifacts/demo.journal.json" };
+}
+
+function mockPublicKey(generated = false): PublicKeyInfo {
+  return { label: generated ? "id_ed25519_ssh_launchpad.pub" : "id_ed25519.pub", path: "C:\\Users\\demo\\.ssh\\id_ed25519.pub", privateKeyPath: "C:\\Users\\demo\\.ssh\\id_ed25519", generated, publicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMockPublicKeyForSafeLaunchpadPreview controller" };
+}
+
+function profileToYAML(profile: Profile): string {
+  const scalar = (value: unknown) => JSON.stringify(value);
+  return `schemaVersion: ${profile.schemaVersion}\nname: ${scalar(profile.name)}\ntarget:\n  platform: ${profile.target.platform}\nssh:\n  enabled: ${profile.ssh.enabled}\n  port: ${profile.ssh.port}\n  publicKeys:\n${profile.ssh.publicKeys.map((key) => `    - ${scalar(key)}`).join("\n")}\n  passwordAuthentication: ${profile.ssh.passwordAuthentication}\ntransport:\n  mode: ${profile.transport.mode}\n  install: ${profile.transport.install}\nexposure:\n  mode: ${profile.exposure.mode}\n  customCidrs: []\ndownload:\n  strategy: ${profile.download.strategy}\n  mirrorBaseUrl: ${scalar(profile.download.mirrorBaseUrl)}\n  proxyUrl: ${scalar(profile.download.proxyUrl)}\n  offlineBundle: ${scalar(profile.download.offlineBundle)}\n  cacheDir: ${scalar(profile.download.cacheDir)}\n  retries: ${profile.download.retries}\nsafety:\n  confirmHighRisk: true\n  preventSelfCut: ${profile.safety.preventSelfCut}\n  scheduledDelaySeconds: ${profile.safety.scheduledDelaySeconds}\n  autoRollback: ${profile.safety.autoRollback}\nadvanced:\n  windowsSshService: sshd\n  linuxSshService: auto\n  macosSshLabel: com.openssh.sshd\n  stateDir: ${scalar(profile.advanced.stateDir)}\nlabels:\n  experience: guided\n`;
+}
+
+function redactReport(report: Report): Report {
+  const clone = structuredClone(report);
+  if (clone.snapshot?.tailscale.ip) clone.snapshot.tailscale.ip = "<redacted-ip>";
+  if (clone.snapshot?.hostname) clone.snapshot.hostname = "<redacted-host>";
+  return clone;
+}
+
+function fingerprintPreview(key: string): string {
+  const parts = key.split(/\s+/);
+  const data = parts[1] ?? "";
+  return `${parts[0] ?? "public-key"} · ${data.slice(0, 12)}…${data.slice(-8)}`;
+}
+
+function showToast(message: string): void {
+  state.toast = message;
+  const toast = document.querySelector<HTMLElement>("#toast");
+  if (toast) {
+    toast.textContent = message;
+    toast.classList.add("show");
+    setTimeout(() => toast.classList.remove("show"), 2800);
   }
-  const verified = request.stage === "verify";
-  if (verified) {
-    snapshot.sshService.running = true;
-    snapshot.firewall.ports = [request.profile.ssh.port];
-  }
-  return { id: `${request.stage}-${Date.now()}`, stage: request.stage, success: true, exitCode: 0, profileName: request.profile.name, snapshot, plan: { noChanges: verified, highestRisk: "high", selfCutDetected: false, actions: verified ? [] : actions } };
+  announce(message);
 }
 
-function actionRow(action: PlanAction): string {
-  return `<div class="action-row"><span class="risk ${action.risk}">${action.risk}</span><div class="action-copy"><div><strong>${escapeHtml(action.summary)}</strong>${action.selfCutRisk ? `<span class="self-cut">self-cut risk</span>` : ""}</div><p>${escapeHtml(action.reason)}</p><small>${escapeHtml(action.layer)} · ${action.reversible ? "rollback covered" : "manual recovery"}${action.requiresElevation ? " · elevation" : ""}</small></div>${chevronIcon()}</div>`;
-}
-
-function statusCard(title: string, value: string, ok: boolean, note: string, icon: string): string {
-  return `<article class="status-card"><div class="status-icon">${icon}</div><div><p>${escapeHtml(title)}</p><strong>${escapeHtml(value)}</strong><small>${escapeHtml(note)}</small></div><span class="state-dot ${ok ? "ok" : "neutral"}" aria-label="${ok ? "healthy" : "not verified"}"></span></article>`;
-}
-
-function renderWarnings(warnings?: string[]): string {
-  if (!warnings?.length) return "";
-  return `<aside class="warning-banner" role="status">${warningIcon()}<div><strong>Attention</strong>${warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join("")}</div></aside>`;
-}
-
-function metric(label: string, value: string): string {
-  return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
-}
-
-function emptyState(title: string, body: string): string {
-  return `<div class="empty-state">${planIcon()}<strong>${escapeHtml(title)}</strong><p>${escapeHtml(body)}</p></div>`;
+function friendlyError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error ?? "");
+  if (/cancel/i.test(raw)) return t("cancelledUAC");
+  if (/checksum|sha256/i.test(raw)) return state.language === "zh-CN" ? "下载文件校验失败，没有执行安装。请重试或改用已验证的离线包。" : "Download verification failed. Nothing was installed; retry or use a verified offline bundle.";
+  if (/network|timeout|resolve|dns/i.test(raw)) return state.language === "zh-CN" ? "网络暂时不可用。可检查代理、改用官方镜像或离线包后重试。" : "Network unavailable. Check proxy settings, use an explicit trusted mirror, or retry with an offline bundle.";
+  return raw || t("errorGeneric");
 }
 
 function selectField(id: string, label: string, value: string, options: Array<[string, string]>): string {
@@ -505,107 +926,44 @@ function selectField(id: string, label: string, value: string, options: Array<[s
 }
 
 function numberField(id: string, label: string, value: number, min: number, max: number): string {
-  return `<label class="field"><span>${label}</span><input id="${id}" type="number" value="${value}" min="${min}" max="${max}" /></label>`;
+  return `<label class="field"><span>${label}</span><input id="${id}" type="number" value="${value}" min="${min}" max="${max}"/></label>`;
 }
 
-function healthScore(snapshot: Snapshot): string {
-  const signals = [snapshot.sshClient.installed, snapshot.sshServer.installed, snapshot.sshService.running, snapshot.sshConfigValid, snapshot.tailscale.online];
-  return `${Math.round(signals.filter(Boolean).length / signals.length * 100)}%`;
-}
+function valueOf(id: string): string { return document.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(`#${id}`)?.value ?? ""; }
+function checked(id: string): boolean { return document.querySelector<HTMLInputElement>(`#${id}`)?.checked ?? false; }
+function setText(selector: string, text: string): void { const node = document.querySelector<HTMLElement>(selector); if (node) node.textContent = text; }
+function announce(text: string): void { setText("#announcer", text); }
+function delay(ms: number): Promise<void> { return new Promise((resolve) => setTimeout(resolve, ms)); }
+function escapeHtml(value: unknown): string { return String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[char]!); }
+function escapeAttribute(value: unknown): string { return escapeHtml(value); }
+function downloadText(name: string, text: string, type: string): void { const url = URL.createObjectURL(new Blob([text], { type })); const link = document.createElement("a"); link.href = url; link.download = name; link.click(); URL.revokeObjectURL(url); }
+function animateFromCurrent(element: HTMLElement): void { if (matchMedia("(prefers-reduced-motion: reduce)").matches) return; element.getAnimations().forEach((animation) => animation.cancel()); element.animate([{ opacity: .65, transform: "translateY(5px)" }, { opacity: 1, transform: "translateY(0)" }], { duration: 220, easing: "cubic-bezier(.2,.8,.2,1)" }); }
 
-function healthClass(snapshot: Snapshot): string {
-  return snapshot.sshService.running && snapshot.sshConfigValid ? "healthy" : "attention";
-}
-
-function healthLabel(snapshot: Snapshot): string {
-  return snapshot.sshService.running && snapshot.sshConfigValid ? "Locally ready" : "Needs a plan";
-}
-
-function animateFromCurrent(element: HTMLElement): void {
-  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-  const current = getComputedStyle(element);
-  element.getAnimations().forEach((animation) => animation.cancel());
-  element.animate(
-    [
-      { opacity: Number(current.opacity) || 0.65, transform: current.transform === "none" ? "translateY(6px)" : current.transform },
-      { opacity: 1, transform: "translateY(0)" }
-    ],
-    { duration: 280, easing: "cubic-bezier(.2,.8,.2,1)" }
-  );
-}
-
-function toggleTheme(): void {
-  const current = document.documentElement.dataset.theme;
-  document.documentElement.dataset.theme = current === "dark" ? "light" : "dark";
-}
-
-function refreshBusyControls(): void {
-  document.querySelector<HTMLButtonElement>("#run-check")!.disabled = state.busy;
-  document.querySelector<HTMLButtonElement>("#run-check")!.textContent = state.busy ? "Working…" : "Run check";
-}
-
-function syncNavigation(): void {
-  document.querySelectorAll<HTMLElement>(".nav-item").forEach((item) => {
-    const active = item.dataset.view === state.activeView;
-    item.classList.toggle("active", active);
-    item.setAttribute("aria-current", active ? "page" : "false");
-  });
-  setText("#view-title", titles[state.activeView] ?? "SSH Launchpad");
-}
-
-function announce(message: string): void {
-  setText("#announcer", message);
-}
-
-function setText(selector: string, value: string): void {
-  const element = document.querySelector(selector);
-  if (element) element.textContent = value;
-}
-
-function valueOf(id: string): string {
-  return (document.querySelector<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(`#${id}`)?.value ?? "").trim();
-}
-
-function checked(id: string): boolean {
-  return document.querySelector<HTMLInputElement>(`#${id}`)?.checked ?? false;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[character] ?? character);
-}
-
-function escapeAttribute(value: string): string {
-  return escapeHtml(value);
-}
-
-function svg(path: string): string {
-  return `<svg viewBox="0 0 24 24" aria-hidden="true">${path}</svg>`;
-}
-
-function statusIcon(): string { return svg('<path d="M4 13h4l2-7 4 12 2-5h4"/><path d="M3 5h18v14H3z"/>'); }
-function planIcon(): string { return svg('<path d="M5 4h14v16H5z"/><path d="M8 8h8M8 12h8M8 16h5"/>'); }
-function progressIcon(): string { return svg('<circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/>'); }
-function verifyIcon(): string { return svg('<path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6z"/><path d="m9 12 2 2 4-5"/>'); }
-function recoveryIcon(): string { return svg('<path d="M4 8v5h5"/><path d="M5.5 16a8 8 0 1 0 0-8L4 10"/>'); }
-function advancedIcon(): string { return svg('<path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6"/>'); }
-function themeIcon(): string { return svg('<path d="M20 15.5A8 8 0 0 1 8.5 4 8 8 0 1 0 20 15.5z"/>'); }
-function warningIcon(): string { return svg('<path d="M12 3 2.5 20h19z"/><path d="M12 9v5m0 3h.01"/>'); }
-function platformIcon(): string { return svg('<rect x="4" y="5" width="16" height="11" rx="2"/><path d="M8 20h8M12 16v4"/>'); }
-function transportIcon(): string { return svg('<path d="M5 12a7 7 0 0 1 14 0M8 15a4 4 0 0 1 8 0"/><circle cx="12" cy="19" r="1"/>'); }
-function serviceIcon(): string { return svg('<path d="M6 4h12v16H6z"/><path d="M9 8h6M9 12h6M9 16h3"/>'); }
-function firewallIcon(): string { return svg('<path d="M4 5h16v14H4zM4 10h16M8 5v5m8-5v5m-8 5v4m8-4v4m-4-9v5"/>'); }
-function networkIcon(): string { return svg('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/>'); }
-function configIcon(): string { return svg('<path d="M6 3h9l3 3v15H6z"/><path d="M14 3v4h4M9 12h6m-6 4h6"/>'); }
-function chevronIcon(): string { return svg('<path d="m9 6 6 6-6 6"/>'); }
+function svg(content: string): string { return `<svg viewBox="0 0 24 24" aria-hidden="true">${content}</svg>`; }
+function launchIcon(): string { return svg('<path d="M5 8.5 12 4l7 4.5v7L12 20l-7-4.5z"/><path d="m9 11 2 2-2 2m4 0h3"/>'); }
+function themeIcon(): string { return svg('<path d="M12 3a9 9 0 1 0 9 9c-5 2-11-4-9-9z"/>'); }
+function devicesIcon(): string { return svg('<rect x="2.5" y="5" width="11" height="8" rx="1.5"/><path d="M6 17h4m-2-4v4"/><rect x="15.5" y="8" width="6" height="10" rx="1.3"/>'); }
+function arrowIcon(): string { return svg('<path d="M5 12h14m-5-5 5 5-5 5"/>'); }
+function screenIcon(): string { return svg('<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8m-4-4v4"/>'); }
+function repairIcon(): string { return svg('<path d="M14.5 6.5a4 4 0 0 0-5-5L12 4 9 7 6.5 4.5a4 4 0 0 0 5 5L19 17a1.4 1.4 0 0 1-2 2z"/>'); }
+function slidersIcon(): string { return svg('<path d="M4 7h10m4 0h2M4 17h2m4 0h10M14 4v6M6 14v6"/>'); }
+function lockIcon(): string { return svg('<rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>'); }
+function backIcon(): string { return svg('<path d="m15 18-6-6 6-6"/>'); }
+function searchIcon(): string { return svg('<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>'); }
 function checkIcon(): string { return svg('<path d="m5 12 4 4L19 6"/>'); }
-function dotIcon(): string { return svg('<circle cx="12" cy="12" r="2"/>'); }
+function shieldIcon(): string { return svg('<path d="M12 3 20 6v5c0 5-3.4 8.2-8 10-4.6-1.8-8-5-8-10V6z"/><path d="m8.5 12 2.2 2.2 4.8-5"/>'); }
+function infoIcon(): string { return svg('<circle cx="12" cy="12" r="9"/><path d="M12 11v5m0-8h.01"/>'); }
+function warningIcon(): string { return svg('<path d="m12 3 10 18H2z"/><path d="M12 9v5m0 3h.01"/>'); }
+function closeIcon(): string { return svg('<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/>'); }
+function computerIcon(): string { return screenIcon(); }
+function userIcon(): string { return svg('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'); }
+function networkIcon(): string { return svg('<circle cx="12" cy="12" r="2"/><path d="M5.6 18.4a9 9 0 0 1 0-12.8m12.8 0a9 9 0 0 1 0 12.8M8.5 15.5a5 5 0 0 1 0-7m7 0a5 5 0 0 1 0 7"/>'); }
+function powerIcon(): string { return svg('<path d="M12 2v10m6.4-6.4a9 9 0 1 1-12.8 0"/>'); }
+function packageIcon(): string { return svg('<path d="m4 7 8-4 8 4v10l-8 4-8-4z"/><path d="m4 7 8 4 8-4m-8 4v10"/>'); }
+function doorIcon(): string { return svg('<path d="M5 21V4l12-2v19M5 21h14"/><path d="M13 12h.01"/>'); }
+function keyIcon(): string { return svg('<circle cx="8" cy="15" r="4"/><path d="m11 12 8-8m-3 3 3 3"/>'); }
+function copyIcon(): string { return svg('<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>'); }
+function uploadIcon(): string { return svg('<path d="M12 16V4m-5 5 5-5 5 5M4 20h16"/>'); }
+function downloadIcon(): string { return svg('<path d="M12 4v12m-5-5 5 5 5-5M4 20h16"/>'); }
 
 void initialise();

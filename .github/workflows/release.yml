@@ -22,7 +22,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - run: go test ./...
       - run: go vet ./...
-      - run: shellcheck scripts/bootstrap.sh
+      - run: shellcheck scripts/bootstrap.sh scripts/new-offline-pack.sh
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   cli:
     needs: quality
@@ -62,11 +66,26 @@ jobs:
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
-          name="ssh-launchpad_${version}_${GOOS}_${GOARCH}"
+          case "$GOOS" in windows) display_os=Windows;; linux) display_os=Linux;; darwin) display_os=macOS;; esac
+          case "$GOARCH" in amd64) display_arch=x64;; arm64) display_arch=ARM64;; esac
+          name="SSH-Launchpad_${version}_${display_os}_${display_arch}_Portable"
           mkdir -p "stage/${name}/profiles"
           go build -trimpath -ldflags="-s -w -X github.com/Shallow-dusty/ssh-launchpad/internal/launchpad.Version=${version}" -o "stage/${name}/ssh-launchpad${{ matrix.ext }}" ./cmd/ssh-launchpad
           cp LICENSE README.md CHANGELOG.md "stage/${name}/"
           cp profiles/*.yaml "stage/${name}/profiles/"
+          cp docs/offline-help.zh-CN.md "stage/${name}/离线帮助-中文.md"
+          cp docs/offline-help.en.md "stage/${name}/Offline Help - English.md"
+          cp docs/offline-pack.md scripts/new-offline-pack.ps1 scripts/new-offline-pack.sh "stage/${name}/"
+          if [[ "$GOOS" == windows ]]; then
+            cp "packaging/launchers/开始使用 SSH Launchpad.cmd" "packaging/launchers/Start SSH Launchpad.cmd" "stage/${name}/"
+          elif [[ "$GOOS" == darwin ]]; then
+            cp "packaging/launchers/Start SSH Launchpad.command" "stage/${name}/"
+            chmod +x "stage/${name}/Start SSH Launchpad.command" "stage/${name}/ssh-launchpad"
+          else
+            cp packaging/launchers/ssh-launchpad.desktop "stage/${name}/"
+            chmod +x "stage/${name}/ssh-launchpad"
+          fi
+          (cd "stage/${name}" && find . -type f ! -name bundle-checksums.txt -print0 | sort -z | xargs -0 sha256sum | sed 's|  \./|  |' > bundle-checksums.txt)
           if [[ "$GOOS" == windows ]]; then
             cd stage
             zip -qr "../${name}.zip" "${name}"
@@ -76,7 +95,7 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: cli-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: ssh-launchpad_*.*
+          path: SSH-Launchpad_*.*
           if-no-files-found: error
 
   bootstrap:
@@ -90,7 +109,8 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           name="ssh-launchpad_${version}_bootstrap"
           mkdir -p "${name}/profiles"
-          cp scripts/bootstrap.ps1 scripts/bootstrap.sh LICENSE README.md "${name}/"
+          cp scripts/bootstrap.ps1 scripts/bootstrap.sh scripts/new-offline-pack.ps1 scripts/new-offline-pack.sh LICENSE README.md "${name}/"
+          cp docs/offline-help.zh-CN.md docs/offline-help.en.md docs/offline-pack.md "${name}/"
           cp profiles/*.yaml "${name}/profiles/"
           zip -qr "${name}.zip" "${name}"
       - uses: actions/upload-artifact@v6
@@ -136,7 +156,7 @@ jobs:
       - name: Script and browser tests
         shell: pwsh
         run: |
-          Invoke-Pester -Path tests/bootstrap.Tests.ps1 -CI
+          Invoke-Pester -Path tests -CI
           pnpm --dir frontend run build
           pnpm --dir frontend run test:e2e
       - name: Build user-scope installer
@@ -147,11 +167,11 @@ jobs:
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
           $installer = Get-ChildItem build/bin -Filter '*installer.exe' | Select-Object -First 1
           if (-not $installer) { throw 'NSIS installer missing' }
-          Copy-Item $installer.FullName "SSH-Launchpad_${version}_windows_amd64_setup.exe"
+          Copy-Item $installer.FullName "SSH-Launchpad_${version}_Windows_x64_Installer_UNSIGNED.exe"
       - uses: actions/upload-artifact@v6
         with:
           name: desktop-windows
-          path: SSH-Launchpad_*_windows_amd64_setup.exe
+          path: SSH-Launchpad_*_Windows_x64_Installer_UNSIGNED.exe
           if-no-files-found: error
 
   publish:
@@ -187,4 +207,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" release-assets/* \
             --verify-tag \
             --title "SSH Launchpad $GITHUB_REF_NAME" \
-            --notes-file .github/release-notes-v0.1.0.md
+            --notes-file .github/release-notes-v0.2.0.md

@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory)]
     [Alias('Path')]
-    [string]$Directory
+    [string]$Directory,
+    [switch]$SkipSBOM
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,16 +13,41 @@ $releaseLayout = Test-Path -LiteralPath (Join-Path $root 'checksums.txt')
 if ($releaseLayout) {
     $assets = Get-ChildItem -LiteralPath $root -File
     foreach ($pattern in @(
-        'ssh-launchpad_*_windows_amd64.zip',
-        'ssh-launchpad_*_linux_amd64.tar.gz',
-        'ssh-launchpad_*_darwin_arm64.tar.gz',
+        'SSH-Launchpad_*_Windows_x64_Portable.zip',
+        'SSH-Launchpad_*_Linux_x64_Portable.tar.gz',
+        'SSH-Launchpad_*_macOS_ARM64_Portable.tar.gz',
         'ssh-launchpad_*_bootstrap.zip',
-        'SSH-Launchpad_*_windows_amd64_setup.exe',
-        'ssh-launchpad.spdx.json'
+        'SSH-Launchpad_*_Windows_x64_Installer_UNSIGNED.exe'
     )) {
         if (-not ($assets | Where-Object Name -Like $pattern)) {
             throw "Package smoke check failed: missing release asset $pattern"
         }
+    }
+    if (-not $SkipSBOM -and -not ($assets | Where-Object Name -EQ 'ssh-launchpad.spdx.json')) {
+        throw 'Package smoke check failed: missing release asset ssh-launchpad.spdx.json'
+    }
+
+    $windowsPortable = $assets | Where-Object Name -Like 'SSH-Launchpad_*_Windows_x64_Portable.zip' | Select-Object -First 1
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $portableArchive = [System.IO.Compression.ZipFile]::OpenRead($windowsPortable.FullName)
+    try {
+        $portableEntries = $portableArchive.Entries | ForEach-Object FullName
+        foreach ($required in @(
+            'ssh-launchpad.exe',
+            '开始使用 SSH Launchpad.cmd',
+            'Start SSH Launchpad.cmd',
+            '离线帮助-中文.md',
+            'Offline Help - English.md',
+            'bundle-checksums.txt',
+            'profiles/example.yaml'
+        )) {
+            if (-not ($portableEntries -match ([regex]::Escape($required) + '$'))) {
+                throw "Package smoke check failed: Windows portable missing $required"
+            }
+        }
+    }
+    finally {
+        $portableArchive.Dispose()
     }
 
     $bootstrap = $assets | Where-Object Name -Like 'ssh-launchpad_*_bootstrap.zip' | Select-Object -First 1

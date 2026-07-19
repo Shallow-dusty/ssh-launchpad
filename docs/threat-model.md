@@ -23,7 +23,7 @@
 | WSL result misrepresents Windows | separate platform identity and adapters |
 | Log leaks device details | local reports use restrictive permissions; artifacts are excluded from releases |
 
-## Out of scope for v0.1.0
+## Out of scope for v0.2.0
 
 - Protecting a host already controlled by an administrator-level attacker.
 - Managing private keys or acting as a certificate authority.

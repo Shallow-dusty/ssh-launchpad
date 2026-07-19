@@ -16,6 +16,17 @@ import (
 
 var publicKeyPattern = regexp.MustCompile(`^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com)\s+[A-Za-z0-9+/=]+(?:\s+[^\r\n]+)?$`)
 
+func ValidatePublicKey(value string) error {
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, "PRIVATE KEY") {
+		return errors.New("private keys are not accepted")
+	}
+	if !publicKeyPattern.MatchString(value) {
+		return errors.New("value is not a supported OpenSSH public key")
+	}
+	return nil
+}
+
 func DefaultProfile() Profile {
 	return Profile{
 		SchemaVersion: SchemaVersion,
@@ -88,7 +99,7 @@ func (p Profile) Validate() error {
 		errs = append(errs, errors.New("ssh.port must be between 1 and 65535"))
 	}
 	for i, key := range p.SSH.PublicKeys {
-		if strings.Contains(key, "PRIVATE KEY") || !publicKeyPattern.MatchString(strings.TrimSpace(key)) {
+		if err := ValidatePublicKey(key); err != nil {
 			errs = append(errs, fmt.Errorf("ssh.publicKeys[%d] is not a supported OpenSSH public key", i))
 		}
 	}

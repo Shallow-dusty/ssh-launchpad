@@ -1,107 +1,89 @@
 # SSH Launchpad
 
-SSH Launchpad is a cross-platform SSH bootstrap and recovery studio. It detects
-the host, builds a concrete read-only plan, applies the smallest necessary
-changes with explicit confirmation, and verifies each layer separately.
+不用命令行，也不用先学 SSH。SSH Launchpad 用一个中文向导，让这台电脑可以被你从另一台电脑安全连接。
 
-It supports three ways to work:
+![SSH Launchpad 中文首屏](docs/images/v0.2-home-zh.png)
 
-- `ssh-launchpad`: a small Go CLI with structured JSON reports.
-- SSH Launchpad Studio: a Wails desktop app backed by the same Go engine.
-- `bootstrap.ps1` and `bootstrap.sh`: standalone installers that download,
-  verify, install, and optionally run Check, Plan, or Verify without requiring
-  the desktop app.
+## Windows：下载后只做三步
 
-Tailscale is optional. The recommended exposure is tailnet-only, but LAN and
-explicit custom CIDRs are supported. Windows and WSL are always treated as
-separate targets.
+1. 在 [最新 Release](https://github.com/Shallow-dusty/ssh-launchpad/releases/latest) 下载
+   `SSH-Launchpad_*_Windows_x64_Installer_UNSIGNED.exe`（推荐）。
+2. 双击安装并打开，首屏选择“让这台电脑可以被远程连接”。
+3. 按“检查电脑 → 推荐方案 → 安全安装 → 测试连接”完成向导。
 
-## Safety model
+普通用户直接启动即可；真正安装系统组件时才会出现 Windows UAC 权限确认。取消确认不会继续执行。
 
-The lifecycle is `Check -> Plan -> Apply -> Verify`.
+> 当前安装器没有代码签名。请只从本仓库 Release 下载并核对 SHA-256；不要把关闭 SmartScreen
+> 或安全软件当作常规解决办法。
 
-- Check and Plan are strictly read-only.
-- Apply requires `--yes`; high-risk operations are visible as individual
-  actions and are journaled.
-- Verify does not elevate.
-- Active-channel self-cut is blocked by default. Risky service or transport
-  restarts can only be scheduled with an external verification target.
-- Re-running Apply is idempotent because the planner emits only current diffs.
-- Failed Apply attempts can automatically roll back completed reversible
-  actions.
+没有桌面、需要修复或想传到另一台电脑时，下载
+`SSH-Launchpad_*_Windows_x64_Portable.zip`，完整解压后双击
+`开始使用 SSH Launchpad.cmd`。它已包含独立 exe、中文/英文双击入口、示例配置、
+双语离线帮助和包内校验清单，不需要 Go、Node、Wails 或 PowerShell 项目环境。
 
-No command disables TLS verification. Downloads require HTTPS and a matching
-SHA-256 value from the release manifest.
+## 先分清两台电脑
 
-## Quick start
+- **被连接电脑**：正在运行向导、等待别人连接的电脑。
+- **控制电脑**：你坐在旁边，用来发起连接的另一台电脑。
+- 被连接电脑只需要控制电脑的 `.pub` **公钥**。
+- **私钥永远留在控制电脑**，不会上传，也不能写进 profile。
 
-Download the matching archive and `checksums.txt` from the latest release, then
-verify it before extraction.
+向导会检测现有公钥、允许安全生成或导入公钥/配对文件，并在最后给出可复制的连接命令。第一次连接必须核对主机指纹；本机显示绿色不等于跨设备认证已经成功。
 
-```powershell
-.\scripts\bootstrap.ps1 -Version 0.1.0 -Run Check
-```
+## 安全默认值
 
-```sh
-./scripts/bootstrap.sh --version 0.1.0 --run check
-```
+- 默认只允许 Tailscale 私有网络设备访问；Tailscale 是推荐项，不是 SSH 的硬依赖。
+- Check 和 Plan 只读；Verify 不提权。
+- Apply 会逐项说明“安装什么、打开哪个端口、谁能连接”后再确认。
+- 如果操作可能切断当前唯一 SSH/Tailscale 连接，默认阻止并给出本地执行、第二通道或延迟验证方案。
+- 重复运行只处理差异；失败后停止后续步骤并按执行记录恢复可逆改动。
+- 下载必须使用可信 HTTPS 来源并通过 SHA-256，不会关闭 TLS 校验。
+- 默认不收集遥测；导出的支持报告会脱敏主机名、IP、用户名路径、公钥注释和凭据样式字段。
 
-Or run the CLI directly:
+## Portable 与离线
+
+Windows、Linux 和 macOS portable 包都包含单文件 CLI，不需要预装项目运行时。macOS 包带
+`.command` 入口；Linux 包带终端 `.desktop` 入口。未签名 macOS 文件可能触发 Gatekeeper，
+Linux 文件管理器也可能要求先允许执行；详情见包内双语离线帮助。
+
+工具本身可以完全离线运行。若目标系统尚未安装 OpenSSH 或可选 Tailscale，完整离线 Apply
+还需要相应平台依赖。仓库提供
+[`new-offline-pack`](docs/offline-pack.md) 命令生成带来源、许可声明和 SHA-256 的本地依赖包；
+不具备再分发许可的第三方安装器不会进入源码或标准 Release。
+
+## CLI 与自动化
+
+无参数运行会进入与 GUI 同样的小白向导。`--lang auto|zh-CN|en` 或
+`SSH_LAUNCHPAD_LANG` 控制语言；重定向、CI 或 `--non-interactive` 时绝不等待输入。
 
 ```text
-ssh-launchpad check --profile profiles/example.yaml --output check.json
+ssh-launchpad check --output check.json
 ssh-launchpad plan --profile profiles/example.yaml --output plan.json
 ssh-launchpad apply --profile profiles/example.yaml --yes
 ssh-launchpad verify --profile profiles/example.yaml --output verify.json
-ssh-launchpad rollback --journal <journal.json>
 ```
 
-Never put a private key in a profile. Public release examples contain
-placeholders only.
+机器 JSON 字段和退出码始终保持稳定英文，不因界面语言变化。Windows 控制台由程序临时启用
+UTF-8 并在退出时恢复；JSON/日志为 UTF-8 no BOM。非 UTF-8 的 Linux/macOS locale
+安全回退英文 ASCII。
 
-## What is verified
+## English
 
-The report separates:
+Download the recommended unsigned Windows installer from the
+[latest Release](https://github.com/Shallow-dusty/ssh-launchpad/releases/latest), open it, and follow
+the guided UI. Choose the portable package for servers or repair; extract the complete archive and
+open `Start SSH Launchpad.cmd`. The language switch is always available and persists.
 
-1. client and server installation;
-2. SSH configuration syntax;
-3. service status and startup policy;
-4. firewall port and source scope;
-5. optional Tailscale state;
-6. listener reachability;
-7. SSH protocol/KEX;
-8. authentication;
-9. the remote security token/identity.
+## 文档
 
-A reachable TCP port is not reported as successful authentication.
+- [平台支持与验证边界](docs/platform-support.md)
+- [架构](docs/architecture.md)
+- [网络与下载策略](docs/network-download-strategy.md)
+- [离线依赖包](docs/offline-pack.md)
+- [威胁模型](docs/threat-model.md)
+- [故障排查与恢复](docs/troubleshooting.md)
+- [开发与构建](docs/development.md)
+- [Release 验证](docs/release-verification.md)
+- [安全策略](SECURITY.md)
 
-## Build
-
-Requirements: Go 1.25+, Node 22+, pnpm 10+, and Wails 2.13 for the desktop app.
-
-```text
-go test ./...
-cd frontend
-pnpm install
-pnpm run build
-pnpm run test:e2e
-cd ..
-wails build
-```
-
-Windows installers use NSIS. `v0.1.0` publishes the desktop installer for
-Windows amd64; Linux and macOS desktop packaging remains a later native-runner
-milestone. CLI archives are published for all listed OS/architecture targets.
-Artifacts are unsigned and unnotarized.
-
-## Documentation
-
-- [Architecture](docs/architecture.md)
-- [Platform support](docs/platform-support.md)
-- [Network and download strategy](docs/network-download-strategy.md)
-- [Threat model](docs/threat-model.md)
-- [Troubleshooting and recovery](docs/troubleshooting.md)
-- [Release verification](docs/release-verification.md)
-- [Security policy](SECURITY.md)
-
-The project is licensed under the MIT License.
+MIT License。

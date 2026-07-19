@@ -26,6 +26,16 @@ jobs:
       - name: Build CLI
         run: go build -trimpath ./cmd/ssh-launchpad
 
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   scripts:
     strategy:
       fail-fast: false
@@ -43,7 +53,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: ShellCheck
         if: matrix.kind == 'shell'
-        run: shellcheck scripts/bootstrap.sh
+        run: shellcheck scripts/bootstrap.sh scripts/new-offline-pack.sh
       - name: Install Pester
         if: matrix.kind == 'powershell'
         shell: pwsh
@@ -51,7 +61,7 @@ jobs:
       - name: Pester
         if: matrix.kind == 'powershell'
         shell: pwsh
-        run: Invoke-Pester -Path tests/bootstrap.Tests.ps1 -CI
+        run: Invoke-Pester -Path tests -CI
 
   ui:
     runs-on: windows-latest

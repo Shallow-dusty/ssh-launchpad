@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=SSH Launchpad
+Name[zh_CN]=SSH Launchpad 远程连接助手
+Comment=Set up or repair secure remote access
+Comment[zh_CN]=设置或修复安全远程连接
+Terminal=true
+Exec=sh -c 'cd "$(dirname "$1")" && exec ./ssh-launchpad --interactive --lang auto' _ %k
+Icon=utilities-terminal
+Categories=System;Network;
