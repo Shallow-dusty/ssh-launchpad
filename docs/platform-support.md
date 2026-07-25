@@ -26,6 +26,12 @@ does not require ANSI color.
   are tested; the final disposable-VM servicing/interrupt matrix remains v0.3.
 - Linux/macOS adapters are exercised by native CI and generated-command tests,
   not by changing a production host.
+- On Linux/macOS, `ufw status` and `firewall-cmd --list-rich-rules` may return a
+  partial rule set in a non-root session. When SSH Launchpad cannot confirm the
+  requested port-and-scope rule, it records the state as a plan blocker rather
+  than assuming the host is already secured; re-run Check as root or provide an
+  explicit `exposure.mode: custom` CIDR set when the local account cannot read
+  the full firewall state.
 - Windows artifacts are unsigned. macOS artifacts are not signed/notarized and
   may require the user to approve the downloaded file in system settings.
 - Linux desktop entry launch depends on the file manager honoring `Terminal=true`
