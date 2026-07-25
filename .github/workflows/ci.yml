@@ -51,9 +51,17 @@ jobs:
       - name: Install ShellCheck
         if: matrix.kind == 'shell'
         run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - uses: actions/setup-go@v6
+        if: matrix.kind == 'shell'
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
       - name: ShellCheck
         if: matrix.kind == 'shell'
         run: shellcheck scripts/bootstrap.sh scripts/new-offline-pack.sh
+      - name: Generated Unix command semantics
+        if: matrix.kind == 'shell'
+        run: go test ./internal/launchpad -run TestGeneratedUnixCommandSyntaxAndShellCheck -count=1
       - name: Install Pester
         if: matrix.kind == 'powershell'
         shell: pwsh

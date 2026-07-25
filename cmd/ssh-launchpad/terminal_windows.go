@@ -3,14 +3,14 @@
 package main
 
 import (
-	"encoding/base64"
-	"fmt"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
 	"syscall"
 	"unsafe"
 
+	elevationprotocol "github.com/Shallow-dusty/ssh-launchpad/internal/elevation"
 	"github.com/Shallow-dusty/ssh-launchpad/internal/launchpad"
 )
 
@@ -55,23 +55,18 @@ func elevateAndApply(profile launchpad.Profile, options launchpad.ApplyOptions, 
 	return executeElevatedRequest(profile, options, lang, true)
 }
 
-func invokeElevated(executable, requestPath, digest string, lang language) error {
-	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
-	script := fmt.Sprintf(
-		"$p=Start-Process -FilePath %s -Verb RunAs -Wait -PassThru -ArgumentList @('__elevated-apply','--request',%s,'--sha256',%s,'--lang',%s); exit $p.ExitCode",
-		quote(executable), quote(requestPath), quote(digest), quote(string(lang)),
-	)
-	encoded := base64.StdEncoding.EncodeToString([]byte(utf16LE(script)))
+func invokeElevated(executable, requestPath, digest string) error {
+	arguments := []string{"__elevated-apply", "--request", requestPath, "--sha256", digest}
+	script := elevationprotocol.WindowsStartProcessScript(executable, arguments)
+	encoded := elevationprotocol.UTF16LEBase64(script)
+	// #nosec G702 -- the executable and switches are constant; each dynamic
+	// script value is single-quoted by WindowsStartProcessScript and tested.
 	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	return cmd.Run()
-}
-
-func utf16LE(value string) string {
-	encoded := syscall.StringToUTF16(value)
-	bytes := make([]byte, 0, len(encoded)*2)
-	for _, unit := range encoded[:len(encoded)-1] {
-		bytes = append(bytes, byte(unit), byte(unit>>8))
+	err := cmd.Run()
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) && exitError.ExitCode() == elevationprotocol.WindowsCancelledExitCode {
+		return errPermissionCancelled
 	}
-	return string(bytes)
+	return err
 }

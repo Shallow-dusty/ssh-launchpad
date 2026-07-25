@@ -17,12 +17,12 @@ import (
 )
 
 type DownloadRequest struct {
-	URL       string
-	Output    string
-	SHA256    string
-	ProxyURL  string
-	Retries   int
-	AllowHTTP bool
+	URL      string
+	Output   string
+	SHA256   string
+	ProxyURL string
+	Retries  int
+	MaxBytes int64
 }
 
 type DownloadSource struct {
@@ -56,11 +56,23 @@ func DownloadVerified(ctx context.Context, req DownloadRequest, progress func(re
 	if err != nil {
 		return err
 	}
-	if u.Scheme != "https" && !req.AllowHTTP {
+	if u.Scheme != "https" {
 		return errors.New("downloads require HTTPS")
 	}
-	if len(req.SHA256) != 64 {
+	if u.Host == "" {
+		return errors.New("download URL must be absolute")
+	}
+	if _, err := hex.DecodeString(req.SHA256); err != nil || len(req.SHA256) != 64 {
 		return errors.New("an expected SHA-256 is required")
+	}
+	if strings.TrimSpace(req.Output) == "" {
+		return errors.New("download output path is required")
+	}
+	if req.Retries < 0 || req.Retries > 10 {
+		return errors.New("download retries must be between 0 and 10")
+	}
+	if req.MaxBytes <= 0 {
+		req.MaxBytes = 2 * 1024 * 1024 * 1024
 	}
 	if err := os.MkdirAll(filepath.Dir(req.Output), 0o755); err != nil {
 		return err
@@ -68,13 +80,28 @@ func DownloadVerified(ctx context.Context, req DownloadRequest, progress func(re
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	if req.ProxyURL != "" {
 		proxy, err := url.Parse(req.ProxyURL)
-		if err != nil {
-			return err
+		if err != nil || (proxy.Scheme != "http" && proxy.Scheme != "https" && proxy.Scheme != "socks5") || proxy.Host == "" {
+			return errors.New("proxy URL must be an absolute http, https, or socks5 URL")
 		}
 		transport.Proxy = http.ProxyURL(proxy)
 	}
-	client := &http.Client{Transport: transport, Timeout: 0}
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   0,
+		CheckRedirect: func(request *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("too many download redirects")
+			}
+			if request.URL.Scheme != "https" {
+				return errors.New("download redirect downgraded from HTTPS")
+			}
+			return nil
+		},
+	}
 	partial := req.Output + ".part"
+	if info, err := os.Lstat(partial); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("download partial path must not be a symbolic link")
+	}
 	var lastErr error
 	for attempt := 0; attempt <= req.Retries; attempt++ {
 		if attempt > 0 {
@@ -84,7 +111,7 @@ func DownloadVerified(ctx context.Context, req DownloadRequest, progress func(re
 			case <-time.After(time.Duration(1<<min(attempt, 5)) * time.Second):
 			}
 		}
-		if err := downloadAttempt(ctx, client, req.URL, partial, progress); err != nil {
+		if err := downloadAttempt(ctx, client, req.URL, partial, req.MaxBytes, progress); err != nil {
 			lastErr = err
 			continue
 		}
@@ -102,7 +129,7 @@ func DownloadVerified(ctx context.Context, req DownloadRequest, progress func(re
 	return fmt.Errorf("download failed after %d attempt(s): %w", req.Retries+1, lastErr)
 }
 
-func downloadAttempt(ctx context.Context, client *http.Client, rawURL, output string, progress func(received, total int64)) error {
+func downloadAttempt(ctx context.Context, client *http.Client, rawURL, output string, maxBytes int64, progress func(received, total int64)) error {
 	var offset int64
 	if info, err := os.Stat(output); err == nil {
 		offset = info.Size()
@@ -114,6 +141,9 @@ func downloadAttempt(ctx context.Context, client *http.Client, rawURL, output st
 	if offset > 0 {
 		request.Header.Set("Range", "bytes="+strconv.FormatInt(offset, 10)+"-")
 	}
+	if offset > maxBytes {
+		return errors.New("partial download exceeds the configured size limit")
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		return err
@@ -121,6 +151,9 @@ func downloadAttempt(ctx context.Context, client *http.Client, rawURL, output st
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusPartialContent {
 		return fmt.Errorf("unexpected HTTP status %s", response.Status)
+	}
+	if response.ContentLength > maxBytes-offset {
+		return errors.New("download exceeds the configured size limit")
 	}
 	flags := os.O_CREATE | os.O_WRONLY
 	if response.StatusCode == http.StatusPartialContent {
@@ -138,8 +171,11 @@ func downloadAttempt(ctx context.Context, client *http.Client, rawURL, output st
 	if total >= 0 {
 		total += offset
 	}
-	reader := &progressReader{Reader: response.Body, received: offset, total: total, callback: progress}
-	_, err = io.Copy(file, reader)
+	reader := &progressReader{Reader: io.LimitReader(response.Body, maxBytes-offset+1), received: offset, total: total, callback: progress}
+	written, err := io.Copy(file, reader)
+	if err == nil && written > maxBytes-offset {
+		return errors.New("download exceeds the configured size limit")
+	}
 	return err
 }
 

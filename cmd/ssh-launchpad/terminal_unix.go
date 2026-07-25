@@ -24,8 +24,8 @@ func elevateAndApply(profile launchpad.Profile, options launchpad.ApplyOptions, 
 	return executeElevatedRequest(profile, options, lang, false)
 }
 
-func invokeElevated(executable, requestPath, digest string, lang language) error {
-	cmd := exec.Command("sudo", executable, "__elevated-apply", "--request", requestPath, "--sha256", digest, "--lang", string(lang))
+func invokeElevated(executable, requestPath, digest string) error {
+	cmd := exec.Command("sudo", executable, "__elevated-apply", "--request", requestPath, "--sha256", digest)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()
 }

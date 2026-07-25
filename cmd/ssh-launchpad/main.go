@@ -3,8 +3,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,9 +12,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
-	"time"
 
+	elevationprotocol "github.com/Shallow-dusty/ssh-launchpad/internal/elevation"
 	"github.com/Shallow-dusty/ssh-launchpad/internal/launchpad"
 )
 
@@ -33,12 +32,6 @@ type globalOptions struct {
 	interactive    bool
 	nonInteractive bool
 	jsonOnly       bool
-}
-
-type elevatedRequest struct {
-	Profile      launchpad.Profile      `json:"profile"`
-	Options      launchpad.ApplyOptions `json:"options"`
-	ResponsePath string                 `json:"responsePath"`
 }
 
 var currentLanguage = langEN
@@ -231,6 +224,9 @@ func runWizard(options globalOptions) int {
 		fmt.Fprintln(os.Stderr, friendlyError(checkErr))
 		return finishWizard(reader, checkReport.ExitCode)
 	}
+	if checkReport.Snapshot != nil {
+		profile.Transport.Install = !checkReport.Snapshot.Tailscale.Installed
+	}
 	if choice == "3" {
 		return finishWizard(reader, checkReport.ExitCode)
 	}
@@ -252,11 +248,17 @@ func runWizard(options globalOptions) int {
 		return finishWizard(reader, verify.ExitCode)
 	}
 	printPlainPlan(planReport)
+	if planReport.Plan != nil && len(planReport.Plan.Blockers) > 0 {
+		for _, blocker := range planReport.Plan.Blockers {
+			fmt.Fprintf(os.Stderr, "! %s\n", blocker)
+		}
+		return finishWizard(reader, launchpad.ExitVerificationFailed)
+	}
 	if planReport.Plan != nil && planReport.Plan.SelfCutDetected {
 		fmt.Printf("\n! %s\n", tr("selfCutBlocked"))
 		return finishWizard(reader, launchpad.ExitSelfCutBlocked)
 	}
-	if strings.ToLower(prompt(reader, tr("applyPrompt"), tr("no"))) != strings.ToLower(tr("yes")) {
+	if !strings.EqualFold(prompt(reader, tr("applyPrompt"), tr("no")), tr("yes")) {
 		fmt.Printf("\n%s\n", tr("noChanges"))
 		return finishWizard(reader, launchpad.ExitOK)
 	}
@@ -266,7 +268,7 @@ func runWizard(options globalOptions) int {
 	code := apply.ExitCode
 	if code == launchpad.ExitNeedsElevation {
 		fmt.Printf("\n%s\n", tr("permissionPrompt"))
-		if strings.ToLower(prompt(reader, tr("continuePrompt"), tr("yes"))) != strings.ToLower(tr("yes")) {
+		if !strings.EqualFold(prompt(reader, tr("continuePrompt"), tr("yes")), tr("yes")) {
 			fmt.Printf("%s\n", tr("permissionCancelled"))
 			return finishWizard(reader, launchpad.ExitNeedsElevation)
 		}
@@ -289,12 +291,37 @@ func configureControllerKey(reader *bufio.Reader, profile *launchpad.Profile) er
 	fmt.Printf("\n%s\n%s\n", tr("keyTitle"), tr("keyExplain"))
 	if len(keys) > 0 {
 		fmt.Printf("%s %s\n", glyph("[OK]", "✓"), tr("foundKey", len(keys)))
-		profile.SSH.PublicKeys = []string{keys[0]}
-		return nil
+		for index, key := range keys {
+			fmt.Printf("  %d. %s\n", index+1, key.label)
+		}
+		fmt.Printf("  %d. %s\n  %d. %s\n", len(keys)+1, tr("pasteKey"), len(keys)+2, tr("generateKey"))
+		choiceText := prompt(reader, tr("choicePrompt"), "")
+		choice, parseErr := strconv.Atoi(choiceText)
+		if parseErr != nil || choice < 1 || choice > len(keys)+2 {
+			return errors.New(tr("invalidChoice"))
+		}
+		if choice <= len(keys) {
+			profile.SSH.PublicKeys = []string{keys[choice-1].value}
+			return nil
+		}
+		if choice == len(keys)+2 {
+			publicKey, err := generatePublicKey()
+			if err != nil {
+				return err
+			}
+			profile.SSH.PublicKeys = []string{publicKey}
+			fmt.Printf("%s %s\n", glyph("[OK]", "✓"), tr("generatedKey"))
+			return nil
+		}
 	}
-	fmt.Printf("%s\n", tr("noKey"))
-	fmt.Printf("  1. %s\n  2. %s\n", tr("pasteKey"), tr("generateKey"))
-	choice := prompt(reader, tr("choicePrompt"), "1")
+	if len(keys) == 0 {
+		fmt.Printf("%s\n", tr("noKey"))
+		fmt.Printf("  1. %s\n  2. %s\n", tr("pasteKey"), tr("generateKey"))
+	}
+	choice := "1"
+	if len(keys) == 0 {
+		choice = prompt(reader, tr("choicePrompt"), "1")
+	}
 	if choice == "2" {
 		publicKey, err := generatePublicKey()
 		if err != nil {
@@ -312,17 +339,22 @@ func configureControllerKey(reader *bufio.Reader, profile *launchpad.Profile) er
 	return nil
 }
 
-func discoverPublicKeys() []string {
+type discoveredPublicKey struct {
+	label string
+	value string
+}
+
+func discoverPublicKeys() []discoveredPublicKey {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil
 	}
 	paths, _ := filepath.Glob(filepath.Join(home, ".ssh", "*.pub"))
-	var keys []string
+	var keys []discoveredPublicKey
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if err == nil && launchpad.ValidatePublicKey(string(data)) == nil {
-			keys = append(keys, strings.TrimSpace(string(data)))
+			keys = append(keys, discoveredPublicKey{label: filepath.Base(path), value: strings.TrimSpace(string(data))})
 		}
 	}
 	return keys
@@ -337,7 +369,7 @@ func generatePublicKey() (string, error) {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return "", err
 	}
-	path := filepath.Join(directory, "id_ed25519")
+	path := filepath.Join(directory, launchpad.ControllerKeyBaseName)
 	if _, err := os.Stat(path); err == nil {
 		return "", errors.New(tr("privateExists"))
 	}
@@ -406,29 +438,24 @@ func finishWizard(reader *bufio.Reader, code int) int {
 }
 
 func runElevatedApply(args []string) int {
-	flags := flag.NewFlagSet("__elevated-apply", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	requestPath := flags.String("request", "", "")
-	digest := flags.String("sha256", "", "")
-	lang := flags.String("lang", "en", "")
-	if flags.Parse(args) != nil || *requestPath == "" || *digest == "" {
-		return launchpad.ExitInvalidProfile
-	}
-	currentLanguage = resolveLanguage(language(*lang))
-	data, err := os.ReadFile(*requestPath)
+	requestPath, digest, err := elevationprotocol.ParseArguments(args)
 	if err != nil {
 		return launchpad.ExitInvalidProfile
 	}
-	actual := sha256.Sum256(data)
-	if !strings.EqualFold(hex.EncodeToString(actual[:]), *digest) {
+	request, err := elevationprotocol.VerifyRequest(requestPath, digest)
+	if err != nil {
 		return launchpad.ExitInvalidProfile
 	}
-	var request elevatedRequest
-	if json.Unmarshal(data, &request) != nil || request.ResponsePath == "" {
-		return launchpad.ExitInvalidProfile
+	currentLanguage = resolveLanguage(language(request.Language))
+	if currentLanguage == langAuto {
+		currentLanguage = langEN
 	}
 	report, runErr := executeStage(launchpad.StageApply, request.Profile, request.Options, false)
-	if err := writeReport(request.ResponsePath, report); err != nil {
+	response := elevationprotocol.Response{Report: report}
+	if runErr != nil {
+		response.Error = runErr.Error()
+	}
+	if err := elevationprotocol.WriteResponse(request.ResponsePath, response); err != nil {
 		return launchpad.ExitVerificationFailed
 	}
 	if runErr != nil {
@@ -470,36 +497,13 @@ func writeReport(path string, report launchpad.Report) error {
 	}
 	parent := filepath.Dir(path)
 	if parent != "." {
+		// #nosec G301 G703 -- --output intentionally allows the caller to select a report directory.
 		if err := os.MkdirAll(parent, 0o755); err != nil {
 			return err
 		}
 	}
+	// #nosec G703 -- --output is an explicit caller-selected destination, not an archive member or server-controlled path.
 	return os.WriteFile(path, data, 0o600)
-}
-
-func acquireProcessLock() (func(), error) {
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return func() {}, nil
-	}
-	directory := filepath.Join(cache, "ssh-launchpad")
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return nil, err
-	}
-	path := filepath.Join(directory, "interactive.lock")
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		if info, statErr := os.Stat(path); statErr == nil && time.Since(info.ModTime()) > 4*time.Hour {
-			_ = os.Remove(path)
-			file, err = os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		}
-	}
-	if err != nil {
-		return nil, err
-	}
-	_, _ = fmt.Fprintf(file, "%d\n", os.Getpid())
-	_ = file.Close()
-	return func() { _ = os.Remove(path) }, nil
 }
 
 func prompt(reader *bufio.Reader, label, fallback string) string {

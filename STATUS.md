@@ -1,8 +1,40 @@
 # Status
 
-Last verified: 2026-07-19
+Last verified: 2026-07-25
 
 Current release: [`v0.2.0`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.0)
+
+Release candidate: `v0.2.3`
+
+## v0.2.3 audit hardening
+
+- Tailnet setup is phased: install transport first, require online sign-in, then
+  configure SSH and a restricted firewall rule. The guided GUI also offers an
+  explicit LAN-only route.
+- Controller keys require explicit selection, are parsed as real OpenSSH keys,
+  merge without deleting existing access, and target the correct Windows
+  standard-user or administrators file.
+- Windows SSH configuration is inserted before existing directives and
+  `Match` blocks; broad inbound rules are detected and disabled before the
+  managed scoped rule is created.
+- Linux/WSL key ownership follows the invoking user through `sudo`; every
+  declared firewall CIDR has a matching rollback operation.
+- Plan blockers, unsupported manual steps, UAC helper failures, and journal
+  persistence errors can no longer be reported as successful completion.
+- Bootstraps, release paths, archive extraction, offline-pack symlinks, report
+  redaction, macOS launcher line endings, and recursive uninstall boundaries
+  are hardened.
+- Desktop and CLI elevation now share one request/response protocol with
+  digest validation, fixed per-request output locations, ordinary-user-owned
+  response files, and reparse-point-safe elevated writes.
+- CLI concurrency uses live PID ownership and token-checked cleanup. Generated
+  PowerShell/POSIX commands are parser-tested, and Unix commands are also
+  ShellChecked in CI.
+- Downloads are HTTPS-only, release notes are resolved from the pushed tag,
+  and the frontend is split into focused modules while preserving the wizard.
+- Release validation targets v0.2.3 and includes Go 1.25.12 vulnerability,
+  race, vet/static analysis, frontend, package, and v0.2.2-to-v0.2.3 installer
+  upgrade coverage. No SSH, Tailscale, or firewall Apply is run.
 
 ## Current product
 
@@ -25,7 +57,7 @@ Current release: [`v0.2.0`](https://github.com/Shallow-dusty/ssh-launchpad/relea
 ## Validation
 
 The tagged source is covered by Go unit/vet checks, Pester and shell checks,
-six browser wizard E2E scenarios, a Wails/NSIS build, archive/package smoke,
+browser wizard E2E scenarios, a Wails/NSIS build, archive/package smoke,
 real extracted Windows CLI and bilingual launcher smoke, plus silent
 install/first-start/uninstall smoke. See
 [`docs/v0.2-acceptance.md`](docs/v0.2-acceptance.md).

@@ -25,6 +25,12 @@ verification, journals, events, and reports. `cmd/ssh-launchpad` and `app.go`
 only translate user input into engine calls. The UI does not assemble shell
 commands or decide safety policy.
 
+`internal/elevation` owns the single versioned GUI/CLI privilege boundary.
+The standard-user process writes and hashes an immutable request and
+pre-creates fixed response/event files. The elevated helper verifies the
+digest and same-directory paths, refuses reparse-point output targets, and
+writes only those existing files.
+
 ## Platform boundaries
 
 Windows uses PowerShell and Windows service/firewall providers. Linux uses
@@ -36,7 +42,9 @@ service and firewall state is never inferred from it.
 The planner produces inspectable commands, risk, elevation, reversibility, and
 self-cut metadata. The executor refuses unconfirmed high-risk work and writes a
 journal before mutations. Platform commands are intentionally declarative so
-unit tests can validate them on any CI runner.
+unit tests can validate them on any CI runner. Windows-generated commands are
+parsed by PowerShell; Unix-generated commands are checked by `sh -n` and
+ShellCheck on native CI.
 
 ## Report and exit contract
 

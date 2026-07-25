@@ -8,7 +8,7 @@ ssh:
   enabled: true
   port: 2222
   publicKeys:
-    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleReplaceWithYourControllerKey controller
+    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB example-replace-with-controller-key
   passwordAuthentication: false
 
 transport:

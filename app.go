@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	elevationprotocol "github.com/Shallow-dusty/ssh-launchpad/internal/elevation"
 	"github.com/Shallow-dusty/ssh-launchpad/internal/launchpad"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 	"gopkg.in/yaml.v3"
@@ -63,6 +64,10 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) DefaultProfile() launchpad.Profile {
 	return launchpad.DefaultProfile()
+}
+
+func (a *App) ValidatePublicKey(value string) error {
+	return launchpad.ValidatePublicKey(strings.TrimSpace(value))
 }
 
 func (a *App) CheckForUpdate() (launchpad.UpdateInfo, error) {
@@ -145,19 +150,30 @@ func (a *App) BeginElevatedApply(request DesktopRequest) (ElevatedJob, error) {
 	a.mu.Unlock()
 
 	if runtime.GOOS == "windows" && planReport.Snapshot != nil && !planReport.Snapshot.IsAdministrator && planNeedsElevation(planReport.Plan) {
-		data, err := json.MarshalIndent(request, "", "  ")
-		if err != nil {
-			return ElevatedJob{}, err
+		for _, path := range []string{record.responsePath, record.eventsPath} {
+			if err := elevationprotocol.PrecreateFile(path); err != nil {
+				a.DismissElevatedJob(id)
+				return ElevatedJob{}, err
+			}
 		}
 		requestPath := filepath.Join(directory, "request.json")
-		if err := os.WriteFile(requestPath, append(data, '\n'), 0o600); err != nil {
+		elevatedRequest := elevationprotocol.NewRequest(
+			request.Profile,
+			desktopApplyOptions(request),
+			record.responsePath,
+			record.eventsPath,
+			"",
+		)
+		digest, err := elevationprotocol.WriteRequest(requestPath, elevatedRequest)
+		if err != nil {
+			a.DismissElevatedJob(id)
 			return ElevatedJob{}, err
 		}
 		executable, err := os.Executable()
 		if err != nil {
+			a.DismissElevatedJob(id)
 			return ElevatedJob{}, err
 		}
-		digest := requestDigest(append(data, '\n'))
 		go a.runUACJob(record, executable, requestPath, digest)
 		return record.status, nil
 	}
@@ -177,6 +193,9 @@ func (a *App) ElevatedApplyStatus(id string) (ElevatedJob, error) {
 	defer record.mu.Unlock()
 	status := record.status
 	status.Events = readJobEvents(record.eventsPath)
+	if status.State == "waiting-for-permission" && len(status.Events) > 0 {
+		status.State = "running"
+	}
 	return status, nil
 }
 
@@ -191,8 +210,12 @@ func (a *App) DismissElevatedJob(id string) {
 }
 
 func (a *App) runUACJob(record *elevatedJobRecord, executable, requestPath, digest string) {
-	err := launchElevatedHelper(context.Background(), executable, requestPath, record.responsePath, record.eventsPath, digest)
-	response, responseErr := readHelperResponse(record.responsePath)
+	err := launchElevatedHelper(context.Background(), executable, requestPath, digest)
+	finalizeUACJob(record, err)
+}
+
+func finalizeUACJob(record *elevatedJobRecord, launchErr error) {
+	response, responseErr := elevationprotocol.ReadResponse(record.responsePath)
 	record.mu.Lock()
 	defer record.mu.Unlock()
 	if responseErr == nil {
@@ -205,24 +228,24 @@ func (a *App) runUACJob(record *elevatedJobRecord, executable, requestPath, dige
 		}
 		return
 	}
-	record.status.State = "cancelled"
-	record.status.Error = "Windows 权限确认被取消，电脑没有改动。可以返回后重试。"
-	if err != nil && !strings.Contains(strings.ToLower(err.Error()), "exit status") {
-		record.status.Error = "无法启动 Windows 权限确认：" + err.Error()
+	if errors.Is(launchErr, errUACCancelled) {
+		record.status.State = "cancelled"
+		record.status.Error = "Windows 权限确认被取消，电脑没有改动。可以返回后重试。"
+		return
 	}
+	record.status.State = "failed"
+	if launchErr != nil {
+		record.status.Error = "Windows 管理员进程未完成：" + launchErr.Error()
+		return
+	}
+	record.status.Error = "Windows 管理员进程没有返回安装结果：" + responseErr.Error()
 }
 
 func (a *App) runDirectJob(record *elevatedJobRecord, request DesktopRequest) {
 	record.mu.Lock()
 	record.status.State = "running"
 	record.mu.Unlock()
-	report, err := a.engine.Apply(a.ctx, request.Profile, launchpad.ApplyOptions{
-		Confirmed:      true,
-		AllowSelfCut:   request.AllowSelfCut,
-		ScheduleRisky:  request.ScheduleRisky,
-		AutoRollback:   request.Profile.Safety.AutoRollback,
-		ExternalVerify: request.ExternalVerify,
-	})
+	report, err := a.engine.Apply(a.ctx, request.Profile, desktopApplyOptions(request))
 	record.mu.Lock()
 	defer record.mu.Unlock()
 	record.status.Report = &report
@@ -231,6 +254,16 @@ func (a *App) runDirectJob(record *elevatedJobRecord, request DesktopRequest) {
 		record.status.State = "completed"
 	} else {
 		record.status.State = "failed"
+	}
+}
+
+func desktopApplyOptions(request DesktopRequest) launchpad.ApplyOptions {
+	return launchpad.ApplyOptions{
+		Confirmed:      true,
+		AllowSelfCut:   request.AllowSelfCut,
+		ScheduleRisky:  request.ScheduleRisky,
+		AutoRollback:   request.Profile.Safety.AutoRollback,
+		ExternalVerify: request.ExternalVerify,
 	}
 }
 
@@ -336,7 +369,7 @@ func (a *App) GenerateControllerKey(label string) (PublicKeyInfo, error) {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return PublicKeyInfo{}, err
 	}
-	privatePath := filepath.Join(directory, "id_ed25519_ssh_launchpad")
+	privatePath := filepath.Join(directory, launchpad.ControllerKeyBaseName)
 	publicPath := privatePath + ".pub"
 	if _, err := os.Stat(publicPath); errors.Is(err, os.ErrNotExist) {
 		if _, privateErr := os.Stat(privatePath); privateErr == nil {

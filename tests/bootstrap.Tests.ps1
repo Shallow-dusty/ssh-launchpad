@@ -32,4 +32,15 @@ Describe 'PowerShell bootstrap safety' {
         if ($content -notmatch "ValidateSet\('Check', 'Plan', 'Verify', 'None'\)") { throw 'Safe Run set missing' }
         if ($content -match "ValidateSet\([^)]*'Apply'") { throw 'Apply offered as automatic Run stage' }
     }
+
+    It 'rejects version strings that could escape cache or release paths' {
+        { & $scriptPath -Version '..\..\outside' -Run None -WhatIf } | Should -Throw
+        $releaseScript = Join-Path $PSScriptRoot '..\scripts\package-release.ps1'
+        { & $releaseScript -Version '../outside' } | Should -Throw
+    }
+
+    It 'preflights archive entry paths before extraction' {
+        if ($content -notmatch 'Assert-ZipEntriesSafe') { throw 'ZIP entry preflight missing' }
+        if ($content -notmatch 'Archive entry escapes') { throw 'ZIP traversal rejection missing' }
+    }
 }

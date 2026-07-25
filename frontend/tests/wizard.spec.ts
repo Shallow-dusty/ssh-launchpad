@@ -17,6 +17,8 @@ test("Chinese first-run wizard completes the recommended mock path", async ({ pa
   await page.getByRole("button", { name: "继续" }).click();
   await expect(page.getByRole("heading", { name: "推荐方案" })).toBeVisible();
   await expect(page.getByText(/私钥留在控制电脑/)).toBeVisible();
+  await expect(page.getByRole("radio")).not.toBeChecked();
+  await page.getByRole("radio").check();
   await page.getByRole("button", { name: "使用推荐设置" }).click();
   await expect(page.getByRole("heading", { name: "将要做这些事" })).toBeVisible();
   await expect(page.getByText("谁能连接")).toBeVisible();
@@ -28,6 +30,37 @@ test("Chinese first-run wizard completes the recommended mock path", async ({ pa
   await expect(page.getByRole("heading", { name: /已准备好|还差/ })).toBeVisible();
   await expect(page.getByText(/ssh -p 22/)).toBeVisible();
   await expect(page.getByText(/主机指纹/)).toBeVisible();
+});
+
+test("fresh computer without public keys can continue and switch language", async ({ page }) => {
+  await page.goto("/?mock=no-public-key");
+  await page.getByRole("button", { name: /让这台电脑可以被远程连接/ }).click();
+  await expect(page.getByRole("heading", { name: "检查电脑" })).toBeVisible();
+  await page.getByRole("button", { name: "继续" }).click();
+  await expect(page.getByRole("heading", { name: "推荐方案" })).toBeVisible();
+  await expect(page.getByLabel("粘贴控制电脑公钥")).toHaveValue("");
+
+  await page.getByLabel("语言").selectOption("en");
+  await expect(page.getByRole("heading", { name: "Recommended setup" })).toBeVisible();
+  await expect(page.getByLabel("Paste controller public key")).toHaveValue("");
+});
+
+test("clearing a selected key clears profile state and blocks continuation", async ({ page }) => {
+  await page.getByRole("button", { name: /让这台电脑可以被远程连接/ }).click();
+  await page.getByRole("button", { name: "继续" }).click();
+  await page.getByRole("radio").check();
+  await page.getByLabel("粘贴控制电脑公钥").fill("");
+  await page.getByRole("button", { name: "使用推荐设置" }).click();
+  await expect(page.locator("#key-error")).toContainText("还需要控制电脑的公钥");
+  await expect(page.getByRole("heading", { name: "推荐方案" })).toBeVisible();
+});
+
+test("guided mode can explicitly choose LAN instead of Tailscale", async ({ page }) => {
+  await page.getByRole("button", { name: /让这台电脑可以被远程连接/ }).click();
+  await page.getByRole("button", { name: "继续" }).click();
+  await page.getByRole("radio").check();
+  await page.getByRole("button", { name: "仅在局域网使用" }).click();
+  await expect(page.getByRole("heading", { name: "将要做这些事" })).toBeVisible();
 });
 
 test("language switch persists and avoids mixed default navigation", async ({ page }) => {
@@ -45,7 +78,7 @@ test("advanced mode imports a profile and preserves safe defaults", async ({ pag
       schemaVersion: 1,
       name: "import-test",
       target: { platform: "windows" },
-      ssh: { enabled: true, port: 2222, publicKeys: ["ssh-ed25519 AAAA test"], passwordAuthentication: false },
+      ssh: { enabled: true, port: 2222, publicKeys: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB imported-controller"], passwordAuthentication: false },
       transport: { mode: "tailnet", install: false },
       exposure: { mode: "tailnet", customCidrs: [] },
       download: { strategy: "official", retries: 3 },
@@ -67,6 +100,7 @@ test("cancelled UAC is a plain no-change result and can retry", async ({ page })
   await page.goto("/?mock=uac-cancel");
   await page.getByRole("button", { name: /让这台电脑可以被远程连接/ }).click();
   await page.getByRole("button", { name: "继续" }).click();
+  await page.getByRole("radio").check();
   await page.getByRole("button", { name: "使用推荐设置" }).click();
   await page.getByRole("button", { name: "开始安全安装" }).click();
   await page.getByRole("checkbox").check();
@@ -82,6 +116,7 @@ test("second visit is idempotent and narrow layout remains usable", async ({ pag
   await page.getByRole("button", { name: /让这台电脑可以被远程连接/ }).click();
   await expect(page.getByRole("heading", { name: "已准备好" })).toBeVisible();
   await page.getByRole("button", { name: "继续" }).click();
+  await page.getByRole("radio").check();
   await page.getByRole("button", { name: "使用推荐设置" }).click();
   await expect(page.getByText(/已经配置好|无需重复改动/)).toBeVisible();
   await expect(page.locator("body")).not.toHaveCSS("min-width", "900px");

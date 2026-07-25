@@ -3,6 +3,7 @@ package launchpad
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -73,9 +74,12 @@ func (e *Engine) Verify(ctx context.Context, profile Profile) (Report, error) {
 	plan := e.Planner.Build(profile, snapshot)
 	report.Plan = &plan
 	report.Finished = time.Now().UTC()
-	if !plan.NoChanges {
+	if !plan.NoChanges || len(plan.Blockers) > 0 {
 		report.ExitCode = ExitVerificationFailed
 		report.Error = "Verification found remaining drift."
+		if len(plan.Blockers) > 0 {
+			report.Error = "Verification is blocked: " + strings.Join(plan.Blockers, " ")
+		}
 		report.Warnings = append(report.Warnings, plan.Warnings...)
 		return report, errors.New(report.Error)
 	}

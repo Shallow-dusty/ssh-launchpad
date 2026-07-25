@@ -1,7 +1,8 @@
 #requires -Version 5.1
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [string]$Version = '0.2.0',
+    [ValidatePattern('^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$')]
+    [string]$Version = '0.2.3',
     [string]$InstallDirectory = (Join-Path $env:LOCALAPPDATA 'SSH-Launchpad\bin'),
     [ValidateSet('Official', 'Mirror', 'Proxy', 'Offline', 'Cache')]
     [string]$DownloadStrategy = 'Official',
@@ -91,20 +92,41 @@ function Assert-Hash {
     }
 }
 
+function Assert-ZipEntriesSafe {
+    param([string]$Archive, [string]$Destination)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $destinationRoot = [IO.Path]::GetFullPath($Destination).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    $zip = [IO.Compression.ZipFile]::OpenRead($Archive)
+    try {
+        foreach ($entry in $zip.Entries) {
+            $entryName = $entry.FullName.Replace('/', [IO.Path]::DirectorySeparatorChar)
+            if ([IO.Path]::IsPathRooted($entryName) -or $entryName -match '(^|[\\/])\.\.([\\/]|$)' -or $entryName -match ':') {
+                throw (Get-Text "压缩包包含不安全路径：$($entry.FullName)" "Archive contains an unsafe path: $($entry.FullName)")
+            }
+            $target = [IO.Path]::GetFullPath((Join-Path $destinationRoot $entryName))
+            if (-not $target.StartsWith($destinationRoot, [StringComparison]::OrdinalIgnoreCase)) {
+                throw (Get-Text "压缩包条目越过安装暂存目录：$($entry.FullName)" "Archive entry escapes the staging directory: $($entry.FullName)")
+            }
+        }
+    }
+    finally {
+        $zip.Dispose()
+    }
+}
+
 $architecture = Get-Architecture
 $assetArchitecture = if ($architecture -eq 'amd64') { 'x64' } else { 'ARM64' }
 $tag = "v$Version"
 $cliAsset = "SSH-Launchpad_${Version}_Windows_${assetArchitecture}_Portable.zip"
 $desktopAsset = "SSH-Launchpad_${Version}_Windows_x64_Installer_UNSIGNED.exe"
 if ($Desktop -and $architecture -ne 'amd64') {
-    throw (Get-Text 'v0.2.0 暂未提供 Windows ARM64 GUI 安装器，请使用 portable CLI。' 'v0.2.0 does not provide a Windows ARM64 GUI installer; use the portable CLI.')
+    throw (Get-Text 'v0.2.3 暂未提供 Windows ARM64 GUI 安装器，请使用 portable CLI。' 'v0.2.3 does not provide a Windows ARM64 GUI installer; use the portable CLI.')
 }
 $assetName = if ($Desktop) { $desktopAsset } else { $cliAsset }
 $archivePath = Join-Path $CacheDirectory $assetName
 $manifestPath = Join-Path $CacheDirectory 'checksums.txt'
 
 New-Item -ItemType Directory -Force -Path $CacheDirectory | Out-Null
-New-Item -ItemType Directory -Force -Path $InstallDirectory | Out-Null
 
 if ($DownloadStrategy -eq 'Offline') {
     if (-not $OfflineBundle -or -not (Test-Path -LiteralPath $OfflineBundle)) {
@@ -152,10 +174,12 @@ if ($Desktop) {
     return
 }
 
+New-Item -ItemType Directory -Force -Path $InstallDirectory | Out-Null
 $stage = Join-Path $CacheDirectory "extract-$Version-$architecture"
 if (Test-Path -LiteralPath $stage) {
     Remove-Item -LiteralPath $stage -Recurse -Force
 }
+Assert-ZipEntriesSafe -Archive $archivePath -Destination $stage
 Expand-Archive -LiteralPath $archivePath -DestinationPath $stage -Force
 $binary = Get-ChildItem -LiteralPath $stage -Filter 'ssh-launchpad.exe' -Recurse | Select-Object -First 1
 if (-not $binary) {

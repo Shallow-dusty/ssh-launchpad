@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 )
 
 type CommandRunner interface {
@@ -29,6 +31,7 @@ func (OSCommandRunner) Run(ctx context.Context, command []string, output io.Writ
 		return errors.New("no executable command is available for this action")
 	}
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	configureChildProcess(cmd)
 	cmd.Stdout = output
 	cmd.Stderr = output
 	return cmd.Run()
@@ -50,11 +53,25 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 		report.Finished = time.Now().UTC()
 		return report, errors.New(report.Error)
 	}
+	if len(plan.Blockers) > 0 {
+		report.ExitCode = ExitVerificationFailed
+		report.Error = "Apply is blocked: " + strings.Join(plan.Blockers, " ")
+		report.Finished = time.Now().UTC()
+		return report, errors.New(report.Error)
+	}
 	if plan.NoChanges {
 		report.Success = true
 		report.ExitCode = ExitOK
 		report.Finished = time.Now().UTC()
 		return report, nil
+	}
+	for _, action := range plan.Actions {
+		if !action.Mutating || len(action.Command) == 0 {
+			report.ExitCode = ExitUnsupported
+			report.Error = "The plan contains a manual or unsupported action and cannot be reported as successfully applied: " + action.ID
+			report.Finished = time.Now().UTC()
+			return report, errors.New(report.Error)
+		}
 	}
 	if plan.SelfCutDetected && profile.Safety.PreventSelfCut && !opts.AllowSelfCut && !opts.ScheduleRisky {
 		report.ExitCode = ExitSelfCutBlocked
@@ -102,15 +119,6 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 	for _, action := range plan.Actions {
 		result := ActionResult{ActionID: action.ID, Status: "running", Started: time.Now().UTC()}
 		e.emit(StageApply, action.ID, "started", action.Summary, &report)
-		if !action.Mutating || len(action.Command) == 0 {
-			result.Status = "manual"
-			result.Output = action.Reason
-			result.Finished = time.Now().UTC()
-			report.Results = append(report.Results, result)
-			journal.Results = report.Results
-			_ = writeJSONAtomic(journalPath, journal)
-			continue
-		}
 		command := action.Command
 		if action.SelfCutRisk && opts.ScheduleRisky {
 			var err error
@@ -139,14 +147,18 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 		completed = append(completed, action)
 		e.emit(StageApply, action.ID, "completed", result.Status, &report)
 		journal.Results = report.Results
-		_ = writeJSONAtomic(journalPath, journal)
+		if err := writeJSONAtomic(journalPath, journal); err != nil {
+			return e.failAndRollback(ctx, profile, report, journal, journalPath, completed, opts, fmt.Errorf("persist journal after %s: %w", action.ID, err))
+		}
+	}
+	journal.Status = "completed"
+	journal.Results = report.Results
+	if err := writeJSONAtomic(journalPath, journal); err != nil {
+		return e.failAndRollback(ctx, profile, report, journal, journalPath, completed, opts, fmt.Errorf("finalize journal: %w", err))
 	}
 	report.Success = true
 	report.ExitCode = ExitOK
 	report.Finished = time.Now().UTC()
-	journal.Status = "completed"
-	journal.Results = report.Results
-	_ = writeJSONAtomic(journalPath, journal)
 	return report, nil
 }
 
@@ -173,6 +185,20 @@ func (e Executor) Rollback(ctx context.Context, journalPath string) (Report, err
 		}
 		var buffer safeBuffer
 		result := ActionResult{ActionID: action.ID, Status: "rollback-running", Started: time.Now().UTC()}
+		if resultHasStatus(journal.Results, action.ID, "scheduled") {
+			if cancelCommand := cancelScheduledCommand(action.ID); len(cancelCommand) > 0 {
+				if cancelErr := runner.Run(ctx, cancelCommand, &buffer); cancelErr != nil {
+					result.Status = "rollback-failed"
+					result.Error = "could not cancel scheduled action: " + cancelErr.Error()
+					result.Finished = time.Now().UTC()
+					report.Results = append(report.Results, result)
+					report.ExitCode = ExitPartialFailure
+					report.Error = result.Error
+					report.Finished = time.Now().UTC()
+					return report, errors.New(result.Error)
+				}
+			}
+		}
 		err := runner.Run(ctx, action.RollbackCommand, &buffer)
 		result.Output = buffer.String()
 		result.Finished = time.Now().UTC()
@@ -189,7 +215,12 @@ func (e Executor) Rollback(ctx context.Context, journalPath string) (Report, err
 		report.Results = append(report.Results, result)
 	}
 	journal.Status = "rolled-back"
-	_ = writeJSONAtomic(journalPath, journal)
+	if err := writeJSONAtomic(journalPath, journal); err != nil {
+		report.ExitCode = ExitPartialFailure
+		report.Error = "Rollback completed but the journal could not be updated: " + err.Error()
+		report.Finished = time.Now().UTC()
+		return report, errors.New(report.Error)
+	}
 	report.Success = true
 	report.ExitCode = ExitOK
 	report.Finished = time.Now().UTC()
@@ -212,6 +243,17 @@ func (e Executor) failAndRollback(ctx context.Context, profile Profile, report R
 			}
 			var output safeBuffer
 			result := ActionResult{ActionID: action.ID, Status: "rollback-running", Started: time.Now().UTC()}
+			if action.SelfCutRisk && opts.ScheduleRisky {
+				if cancelCommand := cancelScheduledCommand(action.ID); len(cancelCommand) > 0 {
+					if cancelErr := runner.Run(ctx, cancelCommand, &output); cancelErr != nil {
+						result.Status = "rollback-failed"
+						result.Error = "could not cancel scheduled action: " + cancelErr.Error()
+						result.Finished = time.Now().UTC()
+						report.Results = append(report.Results, result)
+						continue
+					}
+				}
+			}
 			err := runner.Run(ctx, action.RollbackCommand, &output)
 			result.Output = output.String()
 			result.Finished = time.Now().UTC()
@@ -227,7 +269,9 @@ func (e Executor) failAndRollback(ctx context.Context, profile Profile, report R
 	report.Finished = time.Now().UTC()
 	journal.Status = "failed"
 	journal.Results = report.Results
-	_ = writeJSONAtomic(journalPath, journal)
+	if journalErr := writeJSONAtomic(journalPath, journal); journalErr != nil {
+		report.Warnings = append(report.Warnings, "The failure journal could not be updated: "+journalErr.Error())
+	}
 	return report, cause
 }
 
@@ -247,7 +291,7 @@ func scheduledCommand(command []string, delay int, actionID string) ([]string, e
 	if runtime.GOOS == "windows" {
 		quoted := windowsCommandLine(command)
 		payload := fmt.Sprintf("try { & %s } finally { Unregister-ScheduledTask -TaskName 'SSH-Launchpad-%s' -Confirm:$false -ErrorAction SilentlyContinue }", quoted, taskID)
-		encoded := base64.StdEncoding.EncodeToString([]byte(stringsToUTF16LE(payload)))
+		encoded := base64.StdEncoding.EncodeToString(stringsToUTF16LE(payload))
 		launcher := fmt.Sprintf(`$a=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -NonInteractive -EncodedCommand %s'; $t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(%d); $s=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 10); Register-ScheduledTask -TaskName 'SSH-Launchpad-%s' -Action $a -Trigger $t -Settings $s -RunLevel Highest -Force | Out-Null`, encoded, delay, taskID)
 		return psCommand(launcher), nil
 	}
@@ -255,6 +299,15 @@ func scheduledCommand(command []string, delay int, actionID string) ([]string, e
 	payload := shQuote(shell)
 	script := fmt.Sprintf("if command -v systemd-run >/dev/null 2>&1; then systemd-run --unit=%s --on-active=%ds --collect /bin/sh -c %s; else nohup /bin/sh -c %s >/tmp/%s.log 2>&1 </dev/null & fi", shQuote("ssh-launchpad-"+taskID), delay, payload, shQuote(fmt.Sprintf("sleep %d; exec %s", delay, shell)), shQuote("ssh-launchpad-"+taskID))
 	return unixCommand(script), nil
+}
+
+func cancelScheduledCommand(actionID string) []string {
+	taskID := sanitizeTaskID(actionID)
+	if runtime.GOOS == "windows" {
+		return psCommand(fmt.Sprintf(`Unregister-ScheduledTask -TaskName 'SSH-Launchpad-%s' -Confirm:$false -ErrorAction SilentlyContinue`, taskID))
+	}
+	unit := shQuote("ssh-launchpad-" + taskID)
+	return unixCommand(fmt.Sprintf("if command -v systemctl >/dev/null 2>&1; then systemctl stop %s.timer %s.service 2>/dev/null || true; systemctl reset-failed %s.timer %s.service 2>/dev/null || true; fi", unit, unit, unit, unit))
 }
 
 func preflightExternalVerify(target string) error {
@@ -300,13 +353,12 @@ func shellJoin(command []string) string {
 	return strings.Join(parts, " ")
 }
 
-func stringsToUTF16LE(value string) string {
+func stringsToUTF16LE(value string) []byte {
 	var out bytes.Buffer
-	for _, r := range value {
-		out.WriteByte(byte(r))
-		out.WriteByte(byte(r >> 8))
+	for _, codeUnit := range utf16.Encode([]rune(value)) {
+		_ = binary.Write(&out, binary.LittleEndian, codeUnit)
 	}
-	return out.String()
+	return out.Bytes()
 }
 
 func containsElevated(actions []Action) bool {
@@ -321,6 +373,15 @@ func containsElevated(actions []Action) bool {
 func resultCompleted(results []ActionResult, id string) bool {
 	for _, result := range results {
 		if result.ActionID == id && (result.Status == "completed" || result.Status == "scheduled") {
+			return true
+		}
+	}
+	return false
+}
+
+func resultHasStatus(results []ActionResult, id, status string) bool {
+	for _, result := range results {
+		if result.ActionID == id && result.Status == status {
 			return true
 		}
 	}

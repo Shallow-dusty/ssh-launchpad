@@ -204,7 +204,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          notes_file=".github/release-notes-${GITHUB_REF_NAME}.md"
+          if [[ ! -f "$notes_file" ]]; then
+            echo "::error file=$notes_file::Release notes are required for tag $GITHUB_REF_NAME"
+            exit 1
+          fi
           gh release create "$GITHUB_REF_NAME" release-assets/* \
             --verify-tag \
             --title "SSH Launchpad $GITHUB_REF_NAME" \
-            --notes-file .github/release-notes-v0.2.0.md
+            --notes-file "$notes_file"

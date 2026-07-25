@@ -35,11 +35,10 @@ func TestDownloadVerifiedResumesAndChecksSHA256(t *testing.T) {
 	http.DefaultTransport = server.Client().Transport
 	defer func() { http.DefaultTransport = old }()
 	err := DownloadVerified(context.Background(), DownloadRequest{
-		URL:       server.URL,
-		Output:    output,
-		SHA256:    hex.EncodeToString(sum[:]),
-		Retries:   1,
-		AllowHTTP: true,
+		URL:     server.URL,
+		Output:  output,
+		SHA256:  hex.EncodeToString(sum[:]),
+		Retries: 1,
 	}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -74,15 +73,63 @@ func TestDownloadFallsBackToNextVerifiedSource(t *testing.T) {
 
 	output := filepath.Join(t.TempDir(), "asset")
 	source, err := DownloadWithFallback(context.Background(), DownloadRequest{
-		Output:    output,
-		SHA256:    hex.EncodeToString(sum[:]),
-		Retries:   0,
-		AllowHTTP: true,
+		Output:  output,
+		SHA256:  hex.EncodeToString(sum[:]),
+		Retries: 0,
 	}, []DownloadSource{{URL: failing.URL}, {URL: working.URL}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if source != working.URL {
 		t.Fatalf("expected fallback source %s, got %s", working.URL, source)
+	}
+}
+
+func TestDownloadRejectsOversizePayloadAndHTTPSDowngrade(t *testing.T) {
+	payload := []byte(strings.Repeat("x", 128))
+	sum := sha256.Sum256(payload)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+	old := http.DefaultTransport
+	http.DefaultTransport = server.Client().Transport
+	defer func() { http.DefaultTransport = old }()
+	err := DownloadVerified(context.Background(), DownloadRequest{
+		URL: server.URL, Output: filepath.Join(t.TempDir(), "asset"), SHA256: hex.EncodeToString(sum[:]), MaxBytes: 64,
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "size limit") {
+		t.Fatalf("oversize download was not rejected: %v", err)
+	}
+
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(payload)
+	}))
+	defer plain.Close()
+	redirect := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL, http.StatusFound)
+	}))
+	defer redirect.Close()
+	http.DefaultTransport = redirect.Client().Transport
+	err = DownloadVerified(context.Background(), DownloadRequest{
+		URL: redirect.URL, Output: filepath.Join(t.TempDir(), "redirect"), SHA256: hex.EncodeToString(sum[:]),
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "downgraded") {
+		t.Fatalf("HTTPS downgrade redirect was not rejected: %v", err)
+	}
+}
+
+func TestDownloadRejectsPlainHTTPEvenWithPinnedSHA256(t *testing.T) {
+	payload := []byte("pinned but not transported over TLS")
+	sum := sha256.Sum256(payload)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+	err := DownloadVerified(context.Background(), DownloadRequest{
+		URL: server.URL, Output: filepath.Join(t.TempDir(), "asset"), SHA256: hex.EncodeToString(sum[:]),
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "require HTTPS") {
+		t.Fatalf("plain HTTP was not rejected: %v", err)
 	}
 }

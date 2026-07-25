@@ -1,6 +1,7 @@
 package launchpad
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -78,5 +79,25 @@ func TestScheduledSelfCutRequiresReachableExternalVerify(t *testing.T) {
 	report, err = executor.Apply(context.Background(), DefaultProfile(), plan, options)
 	if err != nil || !report.Success {
 		t.Fatalf("reachable independent target should permit scheduling: %+v %v", report, err)
+	}
+}
+
+func TestApplyRejectsPlanBlockersAndManualActions(t *testing.T) {
+	executor := Executor{Runner: &recordingRunner{}}
+	report, err := executor.Apply(context.Background(), DefaultProfile(), Plan{Blockers: []string{"sign in first"}}, ApplyOptions{Confirmed: true})
+	if err == nil || report.Success || report.ExitCode != ExitVerificationFailed {
+		t.Fatalf("blocker was reported as success: %+v %v", report, err)
+	}
+	report, err = executor.Apply(context.Background(), DefaultProfile(), Plan{Actions: []Action{{ID: "manual", Mutating: false}}}, ApplyOptions{Confirmed: true})
+	if err == nil || report.Success || report.ExitCode != ExitUnsupported {
+		t.Fatalf("manual action was reported as success: %+v %v", report, err)
+	}
+}
+
+func TestUTF16LEPreservesSurrogatePairs(t *testing.T) {
+	got := stringsToUTF16LE("A😀")
+	want := []byte{0x41, 0x00, 0x3d, 0xd8, 0x00, 0xde}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("UTF-16LE mismatch: %x", got)
 	}
 }

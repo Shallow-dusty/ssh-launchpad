@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-VERSION="${SSH_LAUNCHPAD_VERSION:-0.2.0}"
+VERSION="${SSH_LAUNCHPAD_VERSION:-0.2.3}"
 INSTALL_DIR="${SSH_LAUNCHPAD_INSTALL_DIR:-$HOME/.local/bin}"
 STRATEGY="${SSH_LAUNCHPAD_DOWNLOAD_STRATEGY:-official}"
 BASE_URL="${SSH_LAUNCHPAD_BASE_URL:-https://github.com/Shallow-dusty/ssh-launchpad/releases/download}"
@@ -47,6 +47,11 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+printf '%s\n' "$VERSION" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$' || {
+  say "版本号格式无效：$VERSION" "Invalid version: $VERSION" >&2
+  exit 2
+}
+
 case "$(uname -s)" in
   Linux) ASSET_OS=Linux ;;
   Darwin) ASSET_OS=macOS ;;
@@ -72,12 +77,11 @@ download() {
     https://*) ;;
     *) say "已拒绝非 HTTPS 下载：$uri" "Refusing non-HTTPS download: $uri" >&2; exit 8 ;;
   esac
-  proxy_args=""
   if [ -n "$PROXY_URL" ]; then
-    proxy_args="--proxy $PROXY_URL"
+    curl --fail --location --retry 3 --retry-all-errors --continue-at - --proxy "$PROXY_URL" --output "$destination" "$uri"
+  else
+    curl --fail --location --retry 3 --retry-all-errors --continue-at - --output "$destination" "$uri"
   fi
-  # shellcheck disable=SC2086
-  curl --fail --location --retry 3 --retry-all-errors --continue-at - $proxy_args --output "$destination" "$uri"
 }
 
 case "$STRATEGY" in
@@ -119,9 +123,14 @@ say "已验证 $ASSET（$actual）" "Verified $ASSET ($actual)"
 stage="$CACHE_DIR/extract-$VERSION-$ARCH"
 rm -rf "$stage"
 mkdir -p "$stage"
-tar -xzf "$ARCHIVE" -C "$stage"
+tar -tzf "$ARCHIVE" | awk '
+  /(^|\/)\.\.(\/|$)/ || /^\// { bad=1 }
+  END { exit bad ? 1 : 0 }
+' || { say "压缩包包含不安全路径。" "archive contains an unsafe path" >&2; exit 8; }
+tar -xzf "$ARCHIVE" -C "$stage" --no-same-owner
 binary="$(find "$stage" -type f -name ssh-launchpad | head -n 1)"
 [ -n "$binary" ] || { say "Release 压缩包中没有 ssh-launchpad。" "release archive did not contain ssh-launchpad" >&2; exit 8; }
+[ ! -L "$binary" ] || { say "Release 二进制不能是符号链接。" "release binary must not be a symbolic link" >&2; exit 8; }
 install -m 0755 "$binary" "$INSTALL_DIR/ssh-launchpad"
 
 if [ "$RUN_STAGE" != "none" ]; then

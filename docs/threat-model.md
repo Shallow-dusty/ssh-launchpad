@@ -23,7 +23,11 @@
 | WSL result misrepresents Windows | separate platform identity and adapters |
 | Log leaks device details | local reports use restrictive permissions; artifacts are excluded from releases |
 
-## Out of scope for v0.2.0
+Support-report redaction is heuristic, not a cryptographic guarantee. Review a
+report before sharing it and do not distribute one that still contains a
+private endpoint, account identifier, credential, or other sensitive value.
+
+## Current out of scope
 
 - Protecting a host already controlled by an administrator-level attacker.
 - Managing private keys or acting as a certificate authority.

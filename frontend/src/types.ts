@@ -35,6 +35,8 @@ export interface Snapshot {
   platform: string;
   arch: string;
   hostname: string;
+  targetUser?: string;
+  targetUserIsAdmin: boolean;
   isAdministrator: boolean;
   sessionTransport: string;
   packageManager?: string;
@@ -43,9 +45,11 @@ export interface Snapshot {
   sshService: { name?: string; installed: boolean; running: boolean; startPolicy?: string };
   sshPort?: number;
   sshConfigValid: boolean;
-  firewall: { provider?: string; ports?: number[]; scopes?: string[] };
+  authorizedKeysChecked: boolean;
+  authorizedKeysMatch: boolean;
+  firewall: { provider?: string; ports?: number[]; scopes?: string[]; broadExposure?: boolean; conflictingRules?: string[]; unresolvedBroadRules?: string[] };
   tailscale: { installed: boolean; online: boolean; ip?: string; state?: string };
-  network: { githubDns: boolean; tailscaleDns: boolean; proxySet: boolean };
+  network: { githubDns: boolean; tailscaleDns: boolean; proxySet: boolean; lanIps?: string[]; lanScopes?: string[] };
   warnings?: string[];
 }
 
@@ -68,6 +72,7 @@ export interface Plan {
   selfCutDetected: boolean;
   actions: PlanAction[];
   warnings?: string[];
+  blockers?: string[];
 }
 
 export interface Report {
@@ -123,6 +128,7 @@ declare global {
       main?: {
         App?: {
           DefaultProfile(): Promise<Profile>;
+          ValidatePublicKey(value: string): Promise<void>;
           Run(request: DesktopRequest): Promise<Report>;
           BeginElevatedApply(request: DesktopRequest): Promise<ElevatedJob>;
           ElevatedApplyStatus(id: string): Promise<ElevatedJob>;

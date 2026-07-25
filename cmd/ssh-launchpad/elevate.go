@@ -1,14 +1,12 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	elevationprotocol "github.com/Shallow-dusty/ssh-launchpad/internal/elevation"
 	"github.com/Shallow-dusty/ssh-launchpad/internal/launchpad"
 )
 
@@ -21,35 +19,34 @@ func executeElevatedRequest(profile launchpad.Profile, options launchpad.ApplyOp
 	if windows && profile.Advanced.StateDir == "" {
 		profile.Advanced.StateDir = filepath.Join(os.Getenv("ProgramData"), "SSH Launchpad")
 	}
-	request := elevatedRequest{
-		Profile:      profile,
-		Options:      options,
-		ResponsePath: filepath.Join(directory, "response.json"),
-	}
-	data, err := json.Marshal(request)
-	if err != nil {
-		return false, launchpad.ExitInvalidProfile, err
-	}
-	requestPath := filepath.Join(directory, "request.json")
-	if err := os.WriteFile(requestPath, data, 0o600); err != nil {
+	responsePath := filepath.Join(directory, "response.json")
+	if err := elevationprotocol.PrecreateFile(responsePath); err != nil {
 		return false, launchpad.ExitNeedsElevation, err
 	}
-	digest := sha256.Sum256(data)
+	request := elevationprotocol.NewRequest(profile, options, responsePath, "", string(lang))
+	requestPath := filepath.Join(directory, "request.json")
+	digest, err := elevationprotocol.WriteRequest(requestPath, request)
+	if err != nil {
+		return false, launchpad.ExitNeedsElevation, err
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return false, launchpad.ExitNeedsElevation, err
 	}
-	err = invokeElevated(executable, requestPath, hex.EncodeToString(digest[:]), lang)
-	response, readErr := os.ReadFile(request.ResponsePath)
+	err = invokeElevated(executable, requestPath, digest)
+	response, readErr := elevationprotocol.ReadResponse(responsePath)
 	if readErr != nil {
-		if err != nil {
+		if errors.Is(err, errPermissionCancelled) {
 			return false, launchpad.ExitNeedsElevation, fmt.Errorf("%s", tr("permissionCancelled"))
+		}
+		if err != nil {
+			return false, launchpad.ExitNeedsElevation, fmt.Errorf("elevated helper failed: %w", err)
 		}
 		return false, launchpad.ExitVerificationFailed, readErr
 	}
-	var report launchpad.Report
-	if json.Unmarshal(response, &report) != nil {
-		return false, launchpad.ExitVerificationFailed, errors.New(tr("operationFailed"))
+	report := response.Report
+	if response.Error != "" && report.Error == "" {
+		report.Error = response.Error
 	}
 	if err != nil || !report.Success {
 		if report.Error != "" {
@@ -59,3 +56,5 @@ func executeElevatedRequest(profile launchpad.Profile, options launchpad.ApplyOp
 	}
 	return true, report.ExitCode, nil
 }
+
+var errPermissionCancelled = errors.New("elevation request cancelled")

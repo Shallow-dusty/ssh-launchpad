@@ -50,6 +50,19 @@ if ($releaseLayout) {
         $portableArchive.Dispose()
     }
 
+    foreach ($unixAsset in $assets | Where-Object Name -Match '_(Linux|macOS)_.*_Portable\.tar\.gz$') {
+        $listing = & tar -tvzf $unixAsset.FullName
+        if ($LASTEXITCODE -ne 0) {
+            throw "Package smoke check failed: cannot list $($unixAsset.Name)"
+        }
+        if (-not ($listing | Where-Object { $_ -match '^-rwxr-xr-x\s+.*\sssh-launchpad$' })) {
+            throw "Package smoke check failed: $($unixAsset.Name) ssh-launchpad is not mode 0755"
+        }
+        if ($unixAsset.Name -match '_macOS_' -and -not ($listing | Where-Object { $_ -match '^-rwxr-xr-x\s+.*\sStart SSH Launchpad\.command$' })) {
+            throw "Package smoke check failed: $($unixAsset.Name) .command launcher is not mode 0755"
+        }
+    }
+
     $bootstrap = $assets | Where-Object Name -Like 'ssh-launchpad_*_bootstrap.zip' | Select-Object -First 1
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [System.IO.Compression.ZipFile]::OpenRead($bootstrap.FullName)

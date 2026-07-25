@@ -1,47 +1,54 @@
 package main
 
 import (
-	"os"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestElevatedRequestDigestRejectsTampering(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "request.json")
-	original := []byte(`{"confirmed":true}`)
-	if err := os.WriteFile(path, original, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	digest := requestDigest(original)
-	if _, err := verifyRequestDigest(path, digest); err != nil {
-		t.Fatalf("valid request rejected: %v", err)
-	}
-	if err := os.WriteFile(path, []byte(`{"confirmed":false}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := verifyRequestDigest(path, digest); err == nil {
-		t.Fatal("tampered request should be rejected")
-	}
-}
-
 func TestHelperPowerShellUsesRunAsAndExactDigest(t *testing.T) {
 	command := helperPowerShell(
 		`C:\Program Files\SSH Launchpad\SSH-Launchpad.exe`,
-		`C:\Temp\request.json`,
-		`C:\Temp\response.json`,
-		`C:\Temp\events.jsonl`,
+		`C:\Users\Example User\AppData\Local\SSH Launchpad\jobs\request.json`,
 		"abc123",
 	)
-	for _, required := range []string{"Start-Process", "-Verb RunAs", "--elevated-helper", "abc123"} {
+	for _, required := range []string{
+		"Start-Process",
+		"-Verb RunAs",
+		"--elevated-helper",
+		`--request "C:\Users\Example User\AppData\Local\SSH Launchpad\jobs\request.json"`,
+		"abc123",
+		"NativeErrorCode -eq 1223",
+	} {
 		if !strings.Contains(command, required) {
 			t.Fatalf("launcher command missing %q: %s", required, command)
 		}
 	}
+	if strings.Contains(command, "-ArgumentList @(") {
+		t.Fatalf("Start-Process argument arrays lose quoting when joined: %s", command)
+	}
 }
 
-func TestHelperArgsRequireIntegrityInputs(t *testing.T) {
-	if _, err := parseHelperArgs([]string{"--request", "a"}); err == nil {
-		t.Fatal("incomplete helper arguments should fail")
+func TestFinalizeUACJobDistinguishesCancellationFromHelperFailure(t *testing.T) {
+	cancelled := &elevatedJobRecord{
+		status:       ElevatedJob{ID: "cancelled"},
+		responsePath: filepath.Join(t.TempDir(), "missing-response.json"),
+	}
+	finalizeUACJob(cancelled, errUACCancelled)
+	if cancelled.status.State != "cancelled" {
+		t.Fatalf("explicit UAC cancellation was classified as %q", cancelled.status.State)
+	}
+
+	failed := &elevatedJobRecord{
+		status:       ElevatedJob{ID: "failed"},
+		responsePath: filepath.Join(t.TempDir(), "missing-response.json"),
+	}
+	finalizeUACJob(failed, errors.New("exit status 2"))
+	if failed.status.State != "failed" {
+		t.Fatalf("helper failure was misclassified as %q", failed.status.State)
+	}
+	if !strings.Contains(failed.status.Error, "exit status 2") {
+		t.Fatalf("helper failure detail was lost: %s", failed.status.Error)
 	}
 }

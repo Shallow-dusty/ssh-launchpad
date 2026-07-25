@@ -12,8 +12,11 @@ verification, and recovery logic.
 - A change that may interrupt the active SSH or Tailscale path must be blocked
   by default and must have a rollback journal plus an external verification
   path before it can be scheduled.
-- Platform-specific repositories may consume this project and keep private
-  profiles or evidence, but must not copy the generic implementation.
+- Platform-specific repositories should consume the shared engine instead of
+  vendoring it, so safety fixes remain centrally auditable. They may keep
+  private profiles or evidence locally. This is a contribution and maintenance
+  guideline, not an additional license restriction; downstream use remains
+  governed by the MIT license.
 
 ## Development flow
 

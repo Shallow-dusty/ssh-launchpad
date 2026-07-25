@@ -23,4 +23,4 @@ Start as a normal user. UAC/sudo is requested only for installation. Cancelling 
 
 If the only connection depends on SSH or Tailscale, SSH Launchpad blocks actions that could disconnect itself. Run locally on the target, prepare a second channel, or complete external verification from another computer.
 
-v0.2.0 is not code-signed. When the operating system warns, verify the Release SHA-256 first; disabling SmartScreen or security software is not recommended.
+v0.2.3 is not code-signed. When the operating system warns, verify the Release SHA-256 first; disabling SmartScreen or security software is not recommended.

@@ -3,8 +3,11 @@ package launchpad
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -42,8 +45,12 @@ func CheckForUpdate(ctx context.Context) (UpdateInfo, error) {
 		TagName string `json:"tag_name"`
 		HTMLURL string `json:"html_url"`
 	}
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1024*1024)).Decode(&payload); err != nil {
 		return UpdateInfo{}, err
+	}
+	releaseURL, err := url.Parse(payload.HTMLURL)
+	if err != nil || releaseURL.Scheme != "https" || !strings.EqualFold(releaseURL.Hostname(), "github.com") {
+		return UpdateInfo{}, errors.New("release metadata returned an untrusted release URL")
 	}
 	latest := strings.TrimPrefix(payload.TagName, "v")
 	return UpdateInfo{

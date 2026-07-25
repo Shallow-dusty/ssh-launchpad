@@ -1,0 +1,19 @@
+{
+  "fixed": {
+    "file_version": "@VERSION@.0",
+    "product_version": "@VERSION@.0"
+  },
+  "info": {
+    "0409": {
+      "ProductVersion": "@VERSION@",
+      "FileVersion": "@VERSION@",
+      "CompanyName": "SSH Launchpad Contributors",
+      "FileDescription": "SSH Launchpad",
+      "LegalCopyright": "Copyright 2026 SSH Launchpad Contributors",
+      "ProductName": "SSH Launchpad",
+      "OriginalFilename": "SSH-Launchpad.exe",
+      "InternalName": "SSH-Launchpad.exe",
+      "Comments": "Cross-platform SSH bootstrap and recovery studio"
+    }
+  }
+}

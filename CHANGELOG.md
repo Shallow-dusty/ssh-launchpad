@@ -2,6 +2,72 @@
 
 All notable changes are documented here.
 
+## [0.2.3] - 2026-07-25
+
+### Security and reliability
+
+- Gate Tailnet setup into safe phases: install Tailscale first, require an
+  online signed-in transport, and only then configure SSH or firewall access.
+- Stop silently choosing the first discovered controller key; validate real
+  OpenSSH public-key encoding, preserve existing authorized keys, and target
+  the correct Windows standard-user or administrators key file.
+- Detect and disable conflicting broad Windows inbound SSH rules before adding
+  the managed restricted rule; handle all declared Linux CIDRs with exact
+  rollback commands.
+- Make Windows SSH configuration win before existing directives and `Match`
+  blocks, with validation and immediate backup restoration on failure.
+- Treat blockers, manual-only actions, and journal persistence failures as
+  incomplete work instead of successful Apply or Verify results.
+- Harden CLI UAC argument quoting and cancellation classification, scheduled
+  task UTF-16 encoding, report redaction, archive extraction, release-version
+  paths, offline-pack symlinks, and installer directory deletion boundaries.
+- Share one versioned, digest-checked elevation protocol between the desktop
+  and CLI, pre-create privileged output files as the standard user, reject
+  redirected response paths and reparse points, and preserve file ownership.
+- Replace age-only CLI locking with live process ownership and token-checked
+  cleanup; validate generated PowerShell and POSIX commands with native parsers
+  and ShellCheck.
+- Require HTTPS for all initial and redirected downloads, with no runtime
+  plaintext override, and select tag-matched release notes at publish time.
+- Build with Go 1.25.12, which contains the standard-library security fixes
+  identified by the repository vulnerability scan.
+
+### User experience
+
+- Add an explicit LAN-only guided route alongside the recommended Tailscale
+  route, accurate phased-plan summaries, LAN connection addresses, and
+  blocker explanations.
+- Keep cleared key input cleared, prevent navigation away during an active
+  install, and list controller keys for explicit selection in the CLI.
+- Use one generated-key filename across GUI and CLI, make LAN health counts
+  independent of Tailscale, and split the frontend into focused view, browser,
+  icon, mock-backend, and model modules without changing the guided flow.
+
+## [0.2.2] - 2026-07-25
+
+### Fixed
+
+- Preserve quoting for elevated-helper request, response, and event paths when
+  their per-user cache directory contains spaces.
+- Treat only the explicit Windows `ERROR_CANCELLED` result as a cancelled UAC
+  prompt. A helper launch or execution failure now remains a failed install and
+  keeps its diagnostic instead of incorrectly blaming the user.
+
+## [0.2.1] - 2026-07-25
+
+### Fixed
+
+- Keep empty profile collections present across the Go/Wails JSON boundary so a
+  fresh computer with no local `.pub` files can continue to the recommendation
+  step.
+- Normalize profiles before rendering and after imports, preventing language
+  changes from re-triggering a failed wizard render.
+- Hide Windows child-process consoles during checks, Apply, Verify, and
+  rollback while preserving captured command output and explicit UAC prompts.
+- Reuse the existing per-user install directory, uninstall registration, and
+  shortcuts during upgrades; running copies are blocked with a close-and-retry
+  prompt instead of creating a parallel installation.
+
 ## [0.2.0] - 2026-07-19
 
 ### Added

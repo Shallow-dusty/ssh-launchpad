@@ -8,10 +8,11 @@ import (
 
 var (
 	ipv4Pattern        = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
+	ipv6Pattern        = regexp.MustCompile(`(?i)(?:\b[0-9a-f]{1,4}:){2,}[0-9a-f:]*\b`)
 	windowsUserPattern = regexp.MustCompile(`(?i)\b[A-Z]:\\Users\\[^\\\s"]+`)
 	unixHomePattern    = regexp.MustCompile(`/(?:Users|home)/[^/\s"]+`)
-	tokenPattern       = regexp.MustCompile(`(?i)\b(token|cookie|authkey|authorization)\s*[:=]\s*[^\s,;"]+`)
-	keyCommentPattern  = regexp.MustCompile(`(?m)((?:ssh-[^\s]+|ecdsa-[^\s]+)\s+[A-Za-z0-9+/=]+)(?:\s+[^\r\n]+)`)
+	tokenPattern       = regexp.MustCompile(`(?i)\b(token|cookie|authkey|authorization|password|passwd|secret|credential)\s*[:=]\s*[^\s,;"]+`)
+	keyCommentPattern  = regexp.MustCompile(`(?m)((?:ssh-[^\s]+|ecdsa-[^\s]+|sk-[^\s]+)\s+[A-Za-z0-9+/=]+)(?:\s+[^\r\n]+)`)
 )
 
 // RedactReport creates a shareable report without changing the machine-readable schema.
@@ -30,8 +31,18 @@ func RedactReport(report Report) Report {
 	}
 	if redacted.Snapshot != nil {
 		redacted.Snapshot.Hostname = "<redacted-host>"
+		if redacted.Snapshot.TargetUser != "" {
+			redacted.Snapshot.TargetUser = "<redacted-user>"
+		}
 		if redacted.Snapshot.Tailscale.IP != "" {
 			redacted.Snapshot.Tailscale.IP = "<redacted-ip>"
+		}
+	}
+	if redacted.Plan != nil {
+		for index := range redacted.Plan.Actions {
+			if redacted.Plan.Actions[index].Operation == "configure_keys" {
+				redacted.Plan.Actions[index].Command = []string{"<redacted-key-install-command>"}
+			}
 		}
 	}
 	return redacted
@@ -42,7 +53,9 @@ func redactValue(value any) any {
 	case map[string]any:
 		for key, item := range typed {
 			lower := strings.ToLower(key)
-			if strings.Contains(lower, "token") || strings.Contains(lower, "cookie") || strings.Contains(lower, "privatekey") {
+			if strings.Contains(lower, "token") || strings.Contains(lower, "cookie") || strings.Contains(lower, "privatekey") ||
+				strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "credential") ||
+				strings.Contains(lower, "authorization") || strings.Contains(lower, "authkey") {
 				typed[key] = "<redacted>"
 			} else {
 				typed[key] = redactValue(item)
@@ -56,6 +69,7 @@ func redactValue(value any) any {
 		return typed
 	case string:
 		text := ipv4Pattern.ReplaceAllString(typed, "<redacted-ip>")
+		text = ipv6Pattern.ReplaceAllString(text, "<redacted-ip>")
 		text = windowsUserPattern.ReplaceAllString(text, `C:\Users\<redacted-user>`)
 		text = unixHomePattern.ReplaceAllString(text, "/home/<redacted-user>")
 		text = tokenPattern.ReplaceAllString(text, "$1=<redacted>")

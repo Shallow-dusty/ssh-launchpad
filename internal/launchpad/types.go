@@ -3,10 +3,11 @@ package launchpad
 import "time"
 
 const (
-	SchemaVersion = 1
+	SchemaVersion         = 1
+	ControllerKeyBaseName = "id_ed25519_ssh_launchpad"
 )
 
-var Version = "0.2.0"
+var Version = "0.2.3"
 
 type Stage string
 
@@ -47,7 +48,7 @@ type Profile struct {
 	Download      DownloadProfile   `json:"download" yaml:"download"`
 	Safety        SafetyProfile     `json:"safety" yaml:"safety"`
 	Advanced      AdvancedProfile   `json:"advanced" yaml:"advanced"`
-	Labels        map[string]string `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Labels        map[string]string `json:"labels" yaml:"labels,omitempty"`
 }
 
 type TargetProfile struct {
@@ -58,7 +59,7 @@ type TargetProfile struct {
 type SSHProfile struct {
 	Enabled                bool     `json:"enabled" yaml:"enabled"`
 	Port                   int      `json:"port" yaml:"port"`
-	PublicKeys             []string `json:"publicKeys,omitempty" yaml:"publicKeys,omitempty"`
+	PublicKeys             []string `json:"publicKeys" yaml:"publicKeys,omitempty"`
 	PasswordAuthentication bool     `json:"passwordAuthentication" yaml:"passwordAuthentication"`
 }
 
@@ -69,7 +70,7 @@ type TransportProfile struct {
 
 type ExposureProfile struct {
 	Mode        string   `json:"mode" yaml:"mode"`
-	CustomCIDRs []string `json:"customCidrs,omitempty" yaml:"customCidrs,omitempty"`
+	CustomCIDRs []string `json:"customCidrs" yaml:"customCidrs,omitempty"`
 }
 
 type DownloadProfile struct {
@@ -96,24 +97,28 @@ type AdvancedProfile struct {
 }
 
 type Snapshot struct {
-	Timestamp        time.Time      `json:"timestamp"`
-	Platform         Platform       `json:"platform"`
-	Arch             string         `json:"arch"`
-	Hostname         string         `json:"hostname"`
-	IsAdministrator  bool           `json:"isAdministrator"`
-	SessionTransport string         `json:"sessionTransport"`
-	PackageManager   string         `json:"packageManager,omitempty"`
-	SSHClient        Capability     `json:"sshClient"`
-	SSHServer        Capability     `json:"sshServer"`
-	SSHService       ServiceState   `json:"sshService"`
-	SSHPort          int            `json:"sshPort,omitempty"`
-	SSHConfigValid   bool           `json:"sshConfigValid"`
-	Firewall         FirewallState  `json:"firewall"`
-	Tailscale        TransportState `json:"tailscale"`
-	Network          NetworkState   `json:"network"`
-	PlatformDetails  map[string]any `json:"platformDetails,omitempty"`
-	Warnings         []string       `json:"warnings,omitempty"`
-	ProbeErrors      []string       `json:"probeErrors,omitempty"`
+	Timestamp             time.Time      `json:"timestamp"`
+	Platform              Platform       `json:"platform"`
+	Arch                  string         `json:"arch"`
+	Hostname              string         `json:"hostname"`
+	TargetUser            string         `json:"targetUser,omitempty"`
+	TargetUserIsAdmin     bool           `json:"targetUserIsAdmin"`
+	IsAdministrator       bool           `json:"isAdministrator"`
+	SessionTransport      string         `json:"sessionTransport"`
+	PackageManager        string         `json:"packageManager,omitempty"`
+	SSHClient             Capability     `json:"sshClient"`
+	SSHServer             Capability     `json:"sshServer"`
+	SSHService            ServiceState   `json:"sshService"`
+	SSHPort               int            `json:"sshPort,omitempty"`
+	SSHConfigValid        bool           `json:"sshConfigValid"`
+	AuthorizedKeysChecked bool           `json:"authorizedKeysChecked"`
+	AuthorizedKeysMatch   bool           `json:"authorizedKeysMatch"`
+	Firewall              FirewallState  `json:"firewall"`
+	Tailscale             TransportState `json:"tailscale"`
+	Network               NetworkState   `json:"network"`
+	PlatformDetails       map[string]any `json:"platformDetails,omitempty"`
+	Warnings              []string       `json:"warnings,omitempty"`
+	ProbeErrors           []string       `json:"probeErrors,omitempty"`
 }
 
 type Capability struct {
@@ -130,9 +135,12 @@ type ServiceState struct {
 }
 
 type FirewallState struct {
-	Provider string   `json:"provider,omitempty"`
-	Ports    []int    `json:"ports,omitempty"`
-	Scopes   []string `json:"scopes,omitempty"`
+	Provider             string   `json:"provider,omitempty"`
+	Ports                []int    `json:"ports,omitempty"`
+	Scopes               []string `json:"scopes,omitempty"`
+	BroadExposure        bool     `json:"broadExposure"`
+	ConflictingRules     []string `json:"conflictingRules,omitempty"`
+	UnresolvedBroadRules []string `json:"unresolvedBroadRules,omitempty"`
 }
 
 type TransportState struct {
@@ -143,9 +151,11 @@ type TransportState struct {
 }
 
 type NetworkState struct {
-	GitHubDNS    bool `json:"githubDns"`
-	TailscaleDNS bool `json:"tailscaleDns"`
-	ProxySet     bool `json:"proxySet"`
+	GitHubDNS    bool     `json:"githubDns"`
+	TailscaleDNS bool     `json:"tailscaleDns"`
+	ProxySet     bool     `json:"proxySet"`
+	LANIPs       []string `json:"lanIps,omitempty"`
+	LANScopes    []string `json:"lanScopes,omitempty"`
 }
 
 type Action struct {
@@ -174,6 +184,7 @@ type Plan struct {
 	SelfCutDetected bool      `json:"selfCutDetected"`
 	Actions         []Action  `json:"actions"`
 	Warnings        []string  `json:"warnings,omitempty"`
+	Blockers        []string  `json:"blockers,omitempty"`
 }
 
 type Event struct {

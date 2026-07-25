@@ -1,7 +1,8 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$Version = '0.2.0',
+    [ValidatePattern('^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$')]
+    [string]$Version = '0.2.3',
     [switch]$IncludeWindowsDesktop
 )
 
@@ -12,6 +13,11 @@ if (Test-Path -LiteralPath $releaseRoot) {
     throw "Release directory already exists: $releaseRoot"
 }
 New-Item -ItemType Directory -Path $releaseRoot | Out-Null
+
+$tarTool = Join-Path $repository 'build\tools\package-tar.exe'
+New-Item -ItemType Directory -Path (Split-Path -Parent $tarTool) -Force | Out-Null
+& go build -trimpath -o $tarTool ./scripts/internal/package-tar
+if ($LASTEXITCODE -ne 0) { throw 'Portable tar packer build failed' }
 
 $originalGOOS = $env:GOOS
 $originalGOARCH = $env:GOARCH
@@ -61,8 +67,8 @@ try {
             Compress-Archive -Path (Join-Path $stage '*') -DestinationPath (Join-Path $releaseRoot "$assetBase.zip")
         }
         else {
-            & tar -czf (Join-Path $releaseRoot "$assetBase.tar.gz") -C $stage .
-            if ($LASTEXITCODE -ne 0) { throw "tar failed for $name" }
+            & $tarTool -source $stage -output (Join-Path $releaseRoot "$assetBase.tar.gz")
+            if ($LASTEXITCODE -ne 0) { throw "portable tar packaging failed for $name" }
         }
     }
 }
@@ -80,8 +86,7 @@ Copy-Item profiles -Destination $bootstrapStage -Recurse
 Compress-Archive -Path (Join-Path $bootstrapStage '*') -DestinationPath (Join-Path $releaseRoot "ssh-launchpad_${Version}_bootstrap.zip")
 
 if ($IncludeWindowsDesktop) {
-    $wails = Get-Command wails -ErrorAction Stop
-    & $wails.Source build -clean -nsis -webview2 embed -installscope user -platform windows/amd64
+    & (Join-Path $PSScriptRoot 'build-windows-installer.ps1') -Version $Version
     if ($LASTEXITCODE -ne 0) { throw 'Wails NSIS build failed' }
     $installer = Get-ChildItem build\bin -Filter '*installer.exe' | Select-Object -First 1
     if (-not $installer) {
