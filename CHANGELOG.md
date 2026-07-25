@@ -2,6 +2,28 @@
 
 All notable changes are documented here.
 
+## [0.2.4] - 2026-07-26
+
+### Added
+
+- Add `.sshlaunchpad-card` import/export for personal labels, controller SSH
+  public keys, SSH port, Tailnet/LAN mode, optional Tailscale installation, and
+  an optional Tailscale auth key.
+- Add a home-page import path and a personal-card editor in advanced mode.
+  Imported cards enter the existing guided flow at the read-only Check stage.
+- Allow a card-supplied auth key to plan a single confirmed sequence that
+  installs or authorizes Tailscale before configuring SSH and the restricted
+  firewall rule.
+
+### Security and distribution
+
+- Reject private-key material, malformed public keys, unknown fields, trailing
+  JSON values, invalid modes, and invalid Tailscale auth keys.
+- Keep the auth key out of inspectable plans and journals, mask it in the UI,
+  materialize it only for execution, and redact it from output and reports.
+- Preserve the existing per-user Windows installer identity for an in-place
+  v0.2.3-to-v0.2.4 upgrade.
+
 ## [0.2.3] - 2026-07-25
 
 ### Security and reliability

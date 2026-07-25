@@ -3,6 +3,7 @@ package launchpad
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -99,5 +100,42 @@ func TestUTF16LEPreservesSurrogatePairs(t *testing.T) {
 	want := []byte{0x41, 0x00, 0x3d, 0xd8, 0x00, 0xde}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("UTF-16LE mismatch: %x", got)
+	}
+}
+
+func TestTailscaleAuthKeyIsMaterializedOnlyForExecutionAndRedactedFromReport(t *testing.T) {
+	runner := &recordingRunner{}
+	executor := Executor{
+		Runner:             runner,
+		AdministratorCheck: func(context.Context, Platform) bool { return true },
+	}
+	profile := DefaultProfile()
+	profile.Transport.AuthKey = "tskey-auth-example-once"
+	plan := Plan{
+		Platform: PlatformLinux,
+		Actions: []Action{{
+			ID:                "authenticate-tailscale",
+			Operation:         "authenticate_tailscale",
+			Mutating:          true,
+			RequiresElevation: true,
+			Command:           []string{tailscaleAuthCommandMarker},
+		}},
+	}
+	report, err := executor.Apply(context.Background(), profile, plan, ApplyOptions{Confirmed: true, JournalDir: t.TempDir()})
+	if err != nil || !report.Success {
+		t.Fatalf("Tailscale authentication action failed: %+v %v", report, err)
+	}
+	if got := strings.Join(runner.commands[0], " "); !strings.Contains(got, profile.Transport.AuthKey) {
+		t.Fatalf("auth key was not materialized for execution: %s", got)
+	}
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), profile.Transport.AuthKey) {
+		t.Fatalf("auth key leaked into report: %s", encoded)
+	}
+	if report.Plan.Actions[0].Command[0] != tailscaleAuthCommandMarker {
+		t.Fatalf("inspectable plan should retain only the marker: %#v", report.Plan.Actions[0].Command)
 	}
 }

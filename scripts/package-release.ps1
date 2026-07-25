@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
     [ValidatePattern('^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$')]
-    [string]$Version = '0.2.3',
+    [string]$Version = '0.2.4',
     [switch]$IncludeWindowsDesktop
 )
 

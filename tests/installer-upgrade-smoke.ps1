@@ -5,8 +5,8 @@ param(
     [string]$BaseInstaller,
     [Parameter(Mandatory)]
     [string]$UpgradeInstaller,
-    [string]$BaseVersion = '0.2.2',
-    [string]$UpgradeVersion = '0.2.3'
+    [string]$BaseVersion = '0.2.3',
+    [string]$UpgradeVersion = '0.2.4'
 )
 
 $ErrorActionPreference = 'Stop'

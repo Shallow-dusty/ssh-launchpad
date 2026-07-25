@@ -37,6 +37,17 @@
 - Tag-derived release notes and a modularized frontend with transport-aware
   health counting.
 
+## v0.2.4 — personal cards
+
+- Export and import a compact personal card containing controller public keys,
+  SSH port, personal labels, network mode, and optional Tailscale bootstrap
+  authorization.
+- Keep private keys out of the card and redact Tailscale auth keys from plans,
+  execution output, and support reports.
+- Start imports with a read-only Check and preserve explicit user review and
+  UAC confirmation before any system change.
+- Upgrade the existing per-user Windows installation in place from v0.2.3.
+
 ## v0.3.0 candidates
 
 - Disposable Windows Sandbox/VM real Apply, interrupted servicing, repeat Apply,

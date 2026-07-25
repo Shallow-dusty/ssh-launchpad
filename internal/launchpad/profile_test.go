@@ -2,6 +2,7 @@ package launchpad
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -50,5 +51,23 @@ func TestValidatePublicKeyRejectsFakeBase64AndAcceptsParsedKey(t *testing.T) {
 	const valid = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB controller"
 	if err := ValidatePublicKey(valid); err != nil {
 		t.Fatalf("valid parsed key rejected: %v", err)
+	}
+}
+
+func TestProfileValidationAcceptsOnlyTailnetAuthKeys(t *testing.T) {
+	profile := DefaultProfile()
+	profile.Transport.AuthKey = "tskey-auth-example-once"
+	if err := profile.Validate(); err != nil {
+		t.Fatalf("valid Tailscale auth key rejected: %v", err)
+	}
+	profile.Transport.AuthKey = "not-an-auth-key"
+	if err := profile.Validate(); err == nil || !strings.Contains(err.Error(), "tskey-auth-") {
+		t.Fatalf("invalid Tailscale auth key accepted: %v", err)
+	}
+	profile.Transport.AuthKey = "tskey-auth-example-once"
+	profile.Transport.Mode = "lan"
+	profile.Exposure.Mode = "lan"
+	if err := profile.Validate(); err == nil || !strings.Contains(err.Error(), "requires transport.mode tailnet") {
+		t.Fatalf("LAN profile accepted a Tailscale auth key: %v", err)
 	}
 }

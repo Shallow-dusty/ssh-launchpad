@@ -7,7 +7,7 @@ const (
 	ControllerKeyBaseName = "id_ed25519_ssh_launchpad"
 )
 
-var Version = "0.2.3"
+var Version = "0.2.4"
 
 type Stage string
 
@@ -66,6 +66,7 @@ type SSHProfile struct {
 type TransportProfile struct {
 	Mode    string `json:"mode" yaml:"mode"`
 	Install bool   `json:"install" yaml:"install"`
+	AuthKey string `json:"authKey,omitempty" yaml:"authKey,omitempty"`
 }
 
 type ExposureProfile struct {

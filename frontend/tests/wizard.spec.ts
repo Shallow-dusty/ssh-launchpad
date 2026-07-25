@@ -1,4 +1,9 @@
 import { expect, test } from "@playwright/test";
+// @ts-expect-error Playwright runs tests in Node; the browser-only UI package intentionally does not ship Node typings.
+import { readFile } from "node:fs/promises";
+
+const controllerPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB personal-controller";
+const tailscaleAuthKey = "tskey-auth-k1234567890abcdef-1234567890abcdef";
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
@@ -94,6 +99,75 @@ test("advanced mode imports a profile and preserves safe defaults", async ({ pag
   await expect(page.getByLabel("远程连接端口")).toHaveValue("2222");
   await expect(page.locator("#prevent-self-cut")).toBeChecked();
   await expect(page.locator("#auto-rollback")).toBeChecked();
+});
+
+test("personal card exports public settings and an optional masked Tailscale auth key", async ({ page }) => {
+  await page.getByRole("button", { name: "创建信息卡" }).click();
+  await page.getByLabel("信息卡名称").fill("实验电脑");
+  await page.getByLabel("控制电脑名称").fill("主控制电脑");
+  await page.getByLabel("备注").fill("用于多设备实验");
+  await page.getByLabel("Tailscale 授权码（可选）").fill(tailscaleAuthKey);
+  await page.getByLabel("远程连接端口").fill("2222");
+  await page.getByLabel("控制电脑公钥（每行一个）").fill(controllerPublicKey);
+
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "导出信息卡" }).click();
+  const saved = await download;
+  expect(saved.suggestedFilename()).toBe("实验电脑.sshlaunchpad-card");
+  const card = JSON.parse(await readFile(await saved.path(), "utf8"));
+  expect(card).toMatchObject({
+    schemaVersion: 1,
+    kind: "ssh-launchpad-personal-card",
+    displayName: "实验电脑",
+    controllerName: "主控制电脑",
+    note: "用于多设备实验",
+    ssh: { port: 2222, publicKeys: [controllerPublicKey] },
+    tailscale: { mode: "tailnet", authKey: tailscaleAuthKey }
+  });
+  expect(JSON.stringify(card)).not.toContain("PRIVATE KEY");
+});
+
+test("personal card import loads settings and starts the read-only guided check", async ({ page }) => {
+  const card = JSON.stringify({
+    schemaVersion: 1,
+    kind: "ssh-launchpad-personal-card",
+    displayName: "实验室卡片",
+    controllerName: "控制端 A",
+    note: "直接导入后继续",
+    ssh: { port: 2222, publicKeys: [controllerPublicKey] },
+    tailscale: { mode: "tailnet", install: true, authKey: tailscaleAuthKey }
+  });
+  await page.locator("#card-file").evaluate((element, content) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([content as string], "lab.sshlaunchpad-card", { type: "application/json" }));
+    (element as HTMLInputElement).files = transfer.files;
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  }, card);
+
+  await expect(page.getByRole("heading", { name: "检查电脑" })).toBeVisible();
+  await expect(page.getByText(/还差 \d+ 步/)).toBeVisible();
+  await page.getByRole("button", { name: "继续" }).click();
+  await expect(page.getByText("已载入“实验室卡片”")).toBeVisible();
+  await expect(page.getByLabel("粘贴控制电脑公钥")).toHaveValue(controllerPublicKey);
+  await expect(page.locator("body")).not.toContainText(tailscaleAuthKey);
+});
+
+test("personal card import rejects private-key-shaped content", async ({ page }) => {
+  const invalid = JSON.stringify({
+    schemaVersion: 1,
+    kind: "ssh-launchpad-personal-card",
+    displayName: "bad",
+    ssh: { port: 22, publicKeys: ["-----BEGIN OPENSSH PRIVATE KEY-----"] },
+    tailscale: { mode: "tailnet", install: false }
+  });
+  await page.locator("#card-file").evaluate((element, content) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([content as string], "bad.sshlaunchpad-card", { type: "application/json" }));
+    (element as HTMLInputElement).files = transfer.files;
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  }, invalid);
+  await expect(page.locator("#toast")).toContainText(/私钥|PRIVATE KEY/);
+  await expect(page.getByRole("heading", { name: "你想做什么？" })).toBeVisible();
 });
 
 test("cancelled UAC is a plain no-change result and can retry", async ({ page }) => {

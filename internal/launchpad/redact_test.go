@@ -27,3 +27,10 @@ func TestRedactReportRemovesIdentityAndCredentialLikeData(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactTextRemovesBareTailscaleAuthKey(t *testing.T) {
+	const key = "tskey-auth-example-once"
+	if got := redactText("tailscale up --auth-key=" + key); strings.Contains(got, key) {
+		t.Fatalf("bare Tailscale auth key was not redacted: %s", got)
+	}
+}

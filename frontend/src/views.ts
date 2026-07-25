@@ -17,6 +17,11 @@ export interface ViewState {
   mode: WizardMode;
   step: number;
   profile: Profile;
+  personalCard: {
+    displayName: string;
+    controllerName: string;
+    note: string;
+  };
   report?: Report;
   planReport?: Report;
   verifyReport?: Report;
@@ -36,6 +41,11 @@ export function renderHome(state: ViewState, t: Translate): string {
       <section class="role-card material" aria-labelledby="role-title">
         <div class="role-icon" aria-hidden="true">${devicesIcon()}</div>
         <div><h2 id="role-title">${t("roleTitle")}</h2><div class="role-pair"><span><b>1</b>${t("roleTarget")}</span><i aria-hidden="true">${arrowIcon()}</i><span><b>2</b>${t("roleController")}</span></div><p>${t("roleBody")}</p></div>
+      </section>
+      <section class="personal-card-strip material" aria-labelledby="personal-card-title">
+        <span class="personal-card-icon" aria-hidden="true">${keyIcon()}</span>
+        <div><h2 id="personal-card-title">${t("personalCardTitle")}</h2><p>${t("personalCardLead")}</p></div>
+        <div class="toolbar"><button id="import-personal-card" class="button primary">${uploadIcon()} ${t("importPersonalCard")}</button><button id="create-personal-card" class="button secondary">${t("createPersonalCard")}</button></div>
       </section>
       <div class="task-grid">
         ${taskCard("setup", t("taskSetup"), t("taskSetupBody"), screenIcon(), true, t)}
@@ -100,6 +110,7 @@ function renderRecommendationStep(state: ViewState, t: Translate): string {
       <div class="recommend-icon">${shieldIcon()}</div>
       <div><span class="recommended">${t("recommended")}</span><h2>${t("recommendationTitle")}</h2><p>${t("recommendationBody")}</p><aside class="info-note">${infoIcon()}<span>${tailscaleNote}</span></aside></div>
     </article>
+    ${state.profile.labels.cardDisplayName ? `<aside class="card-loaded-note material">${keyIcon()}<div><strong>${t("cardLoaded", { name: state.profile.labels.cardDisplayName })}</strong>${state.profile.labels.cardNote ? `<p>${escapeHtml(state.profile.labels.cardNote)}</p>` : ""}<small>${state.profile.transport.authKey ? t("cardAuthKeyLoaded") : t("cardIncludesSettings")}</small></div></aside>` : ""}
     <article class="key-card material">
       <div class="section-title"><div><p class="eyebrow">${t("roleController")}</p><h2>${t("keyTitle")}</h2><p>${t("keyExplain")}</p></div>${lockIcon()}</div>
       ${state.detectedKeys.length ? `<div class="detected-keys"><strong>${t("foundKeys")}</strong><p>${t("foundKeysWarn")}</p>${state.detectedKeys.map((key, index) => `<label class="key-option"><input type="radio" name="controller-key" value="${index}" ${key.publicKey === selected ? "checked" : ""}/><span><b>${escapeHtml(key.label)}</b><small>${escapeHtml(fingerprintPreview(key.publicKey))}</small></span></label>`).join("")}</div>` : ""}
@@ -175,6 +186,17 @@ export function renderAdvanced(state: ViewState, t: Translate): string {
   const profile = state.profile;
   return `
     <div class="wizard-header"><button class="text-button" id="advanced-back">${backIcon()} ${t("backHome")}</button><div><p class="eyebrow">${t("taskAdvanced")}</p><h1>${t("advancedTitle")}</h1><p>${t("advancedLead")}</p></div></div>
+    <article class="panel material personal-card-panel">
+      <div class="section-title"><div><p class="eyebrow">${t("personalCardTitle")}</p><h2>${t("personalCardTitle")}</h2><p>${t("personalCardLead")}</p></div>${keyIcon()}</div>
+      <div class="form-grid">
+        <label class="field"><span>${t("cardDisplayName")}</span><input id="card-display-name" type="text" maxlength="128" value="${escapeHtml(state.personalCard.displayName)}" placeholder="${t("cardDisplayNamePlaceholder")}"/></label>
+        <label class="field"><span>${t("cardControllerName")}</span><input id="card-controller-name" type="text" maxlength="128" value="${escapeHtml(state.personalCard.controllerName)}" placeholder="${t("cardControllerNamePlaceholder")}"/></label>
+      </div>
+      <label class="field"><span>${t("cardNote")}</span><textarea id="card-note" rows="2" maxlength="1024" placeholder="${t("cardNotePlaceholder")}">${escapeHtml(state.personalCard.note)}</textarea></label>
+      <label class="field"><span>${t("cardAuthKey")}</span><input id="card-tailscale-auth-key" type="password" autocomplete="off" spellcheck="false" value="${escapeHtml(profile.transport.authKey ?? "")}" placeholder="tskey-auth-…"/><small>${t("cardAuthKeyHint")}</small></label>
+      <p class="small-note">${t("cardIncludesSettings")}</p>
+      <div class="toolbar"><button id="import-personal-card-advanced" class="button secondary">${uploadIcon()} ${t("importPersonalCard")}</button><button id="export-personal-card" class="button primary">${downloadIcon()} ${t("exportPersonalCard")}</button></div>
+    </article>
     <article class="panel material">
       <div class="toolbar"><button id="import-profile" class="button secondary">${uploadIcon()} ${t("importProfile")}</button><button id="export-profile" class="button secondary">${downloadIcon()} ${t("exportProfile")}</button><button id="advanced-check" class="button secondary">${t("runCheck")}</button><button id="advanced-plan" class="button primary">${t("buildPlan")}</button></div>
       <div class="form-grid">
@@ -192,7 +214,7 @@ export function renderAdvanced(state: ViewState, t: Translate): string {
     </article>
     <article class="panel material recovery-panel">
       <div><p class="eyebrow">${t("recoveryTitle")}</p><h2>${t("recoveryTitle")}</h2><p>${t("uninstallChoice")}</p></div>
-      <div class="toolbar"><button id="rollback-last" class="button secondary" ${state.report?.journalPath ? "" : "disabled"}>${t("rollbackLast")}</button><button class="button secondary" disabled title="${state.language === "zh-CN" ? "需要先有由 v0.2.3 创建的管理记录" : "Requires a v0.2.3 managed-state record"}">${t("stopManaged")}</button><button id="export-report-advanced" class="button secondary">${t("exportReport")}</button><button id="check-update" class="button secondary">${t("updateCheck")}</button></div>
+      <div class="toolbar"><button id="rollback-last" class="button secondary" ${state.report?.journalPath ? "" : "disabled"}>${t("rollbackLast")}</button><button class="button secondary" disabled title="${state.language === "zh-CN" ? "需要先有由 SSH Launchpad 创建的管理记录" : "Requires an SSH Launchpad managed-state record"}">${t("stopManaged")}</button><button id="export-report-advanced" class="button secondary">${t("exportReport")}</button><button id="check-update" class="button secondary">${t("updateCheck")}</button></div>
       <p class="small-note">${t("reportPrivacy")}</p>
     </article>
     <aside class="unsigned-banner">${warningIcon()}<span>${t("unsignedNotice")}</span></aside>`;
@@ -224,7 +246,8 @@ function humanAction(action: PlanAction, state: ViewState, t: Translate): string
 function humanActionLabel(action: PlanAction, t: Translate): string {
   const keys: Record<string, MessageKey> = {
     install_ssh: "installSSH", configure_sshd: "configureSSH", configure_keys: "configureKeys",
-    enable_sshd: "enableSSH", configure_firewall: "configureFirewall", install_tailscale: "installTailscale"
+    enable_sshd: "enableSSH", configure_firewall: "configureFirewall", install_tailscale: "installTailscale",
+    authenticate_tailscale: "authenticateTailscale"
   };
   const key = keys[action.operation];
   return key ? t(key) : t("manualAction");
@@ -250,7 +273,7 @@ function renderFriendlyProgress(state: ViewState, t: Translate): string {
 }
 
 function operationFromID(id: string): string {
-  return ({ "install-ssh": "install_ssh", "configure-sshd": "configure_sshd", "configure-authorized-keys": "configure_keys", "enable-sshd": "enable_sshd", "configure-firewall": "configure_firewall", "install-tailscale": "install_tailscale" } as Record<string, string>)[id] ?? id;
+  return ({ "install-ssh": "install_ssh", "configure-sshd": "configure_sshd", "configure-authorized-keys": "configure_keys", "enable-sshd": "enable_sshd", "configure-firewall": "configure_firewall", "install-tailscale": "install_tailscale", "authenticate-tailscale": "authenticate_tailscale" } as Record<string, string>)[id] ?? id;
 }
 
 export function simpleEvent(language: Language, event: { kind: string; message: string; actionId?: string }): string {

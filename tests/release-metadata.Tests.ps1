@@ -18,7 +18,7 @@ Describe 'Release metadata contract' {
     }
 
     It 'contains notes for the current release candidate' {
-        Test-Path -LiteralPath (Join-Path $script:Root '.github\release-notes-v0.2.3.md') |
+        Test-Path -LiteralPath (Join-Path $script:Root '.github\release-notes-v0.2.4.md') |
             Should -BeTrue
     }
 }

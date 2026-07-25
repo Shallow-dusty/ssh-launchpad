@@ -12,6 +12,8 @@ import (
 
 type Planner struct{}
 
+const tailscaleAuthCommandMarker = "__ssh_launchpad_tailscale_auth__"
+
 func (Planner) Build(profile Profile, snapshot Snapshot) Plan {
 	plan := Plan{
 		Timestamp:   time.Now().UTC(),
@@ -26,19 +28,28 @@ func (Planner) Build(profile Profile, snapshot Snapshot) Plan {
 		return plan
 	}
 	if profile.Transport.Mode == "tailnet" && !snapshot.Tailscale.Online {
+		transportReadyAfterApply := false
 		if !snapshot.Tailscale.Installed && profile.Transport.Install {
 			action := installTailscaleAction(profile, snapshot)
 			if len(action.Command) == 0 {
 				plan.Blockers = append(plan.Blockers, action.Reason)
 			} else {
 				plan.Actions = append(plan.Actions, action)
-				plan.Warnings = append(plan.Warnings, "This is a phased setup. After Tailscale is installed, sign in and run Check again; SSH and firewall changes are intentionally deferred.")
 			}
-		} else {
+		}
+		if len(plan.Blockers) == 0 && strings.TrimSpace(profile.Transport.AuthKey) != "" && (snapshot.Tailscale.Installed || profile.Transport.Install) {
+			plan.Actions = append(plan.Actions, authenticateTailscaleAction(snapshot))
+			plan.Warnings = append(plan.Warnings, "The personal card contains a Tailscale auth key. It will be used during Apply and is not included in the action plan or journal.")
+			transportReadyAfterApply = true
+		} else if len(plan.Blockers) == 0 && !snapshot.Tailscale.Installed && profile.Transport.Install {
+			plan.Warnings = append(plan.Warnings, "This is a phased setup. After Tailscale is installed, sign in and run Check again; SSH and firewall changes are intentionally deferred.")
+		} else if len(plan.Blockers) == 0 {
 			plan.Blockers = append(plan.Blockers, "Tailnet exposure is selected, but Tailscale is not online. Install/sign in to Tailscale, then run Check again.")
 		}
-		plan.NoChanges = len(plan.Actions) == 0 && len(plan.Blockers) == 0
-		return plan
+		if !transportReadyAfterApply {
+			plan.NoChanges = len(plan.Actions) == 0 && len(plan.Blockers) == 0
+			return plan
+		}
 	}
 	if !snapshot.SSHClient.Installed || !snapshot.SSHServer.Installed {
 		plan.Actions = append(plan.Actions, installSSHAction(profile, snapshot))
@@ -132,6 +143,14 @@ func installTailscaleAction(profile Profile, snapshot Snapshot) Action {
 		a.Summary = "Install Tailscale from its verified official repository or offline bundle"
 		a.Reason = "SSH Launchpad will not execute curl-to-shell installers. Configure a trusted package repository or provide an offline bundle."
 	}
+	return a
+}
+
+func authenticateTailscaleAction(snapshot Snapshot) Action {
+	a := baseAction("authenticate-tailscale", "authenticate_tailscale", "transport", RiskMedium, "Join the configured Tailscale network", "A personal card supplied a Tailscale auth key and this device is offline.")
+	a.RequiresElevation = snapshot.Platform != PlatformMacOS
+	a.Reversible = false
+	a.Command = []string{tailscaleAuthCommandMarker}
 	return a
 }
 
