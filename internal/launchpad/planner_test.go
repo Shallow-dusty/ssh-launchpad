@@ -1,6 +1,7 @@
 package launchpad
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -185,6 +186,37 @@ func TestOfflineTransportInstallerIsHashPinnedInPlan(t *testing.T) {
 	action := plan.Actions[0]
 	if action.Operation != "install_tailscale" || action.Params["artifactPath"] != profile.Download.OfflineBundle || action.Params["artifactSHA256"] != profile.Download.OfflineSHA256 {
 		t.Fatalf("offline installer is not bound to path and SHA-256: %#v", action)
+	}
+}
+
+func TestPersonalCardAuthKeyEnablesOnePassTailnetPlanWithoutExposure(t *testing.T) {
+	profile := DefaultProfile()
+	profile.Transport.Install = true
+	profile.Transport.AuthKey = "tskey-" + "auth-example-once"
+	profile.SSH.PublicKeys = []string{personalCardTestKey}
+	snapshot := healthySnapshot(PlatformWindows)
+	snapshot.PackageManager = "winget"
+	snapshot.Tailscale = TransportState{}
+	snapshot.SSHServer = Capability{}
+	snapshot.SSHService = ServiceState{Name: "sshd"}
+	snapshot.AuthorizedKeysMatch = false
+	snapshot.Firewall = FirewallState{Checked: true, Enabled: true, Provider: "windows-firewall"}
+
+	plan := (Planner{}).Build(profile, snapshot)
+	operations := make([]string, 0, len(plan.Actions))
+	for _, action := range plan.Actions {
+		operations = append(operations, action.Operation)
+		if strings.Contains(strings.Join(action.Command, " "), profile.Transport.AuthKey) {
+			t.Fatal("Tailscale auth key leaked into the inspectable action plan")
+		}
+	}
+	for _, required := range []string{"install_tailscale", "authenticate_tailscale", "install_ssh", "configure_keys", "configure_firewall"} {
+		if !slices.Contains(operations, required) {
+			t.Fatalf("one-pass personal-card plan missing %s: %#v", required, operations)
+		}
+	}
+	if len(plan.Blockers) != 0 {
+		t.Fatalf("one-pass personal-card plan should be executable: %#v", plan.Blockers)
 	}
 }
 

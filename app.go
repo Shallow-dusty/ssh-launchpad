@@ -332,11 +332,71 @@ func (a *App) ExportProfile(profile launchpad.Profile) (string, error) {
 	if err != nil || path == "" {
 		return "", err
 	}
-	data, err := yaml.Marshal(profile)
+	data, err := marshalExportProfile(profile)
 	if err != nil {
 		return "", err
 	}
 	return path, os.WriteFile(path, data, 0o600)
+}
+
+func marshalExportProfile(profile launchpad.Profile) ([]byte, error) {
+	profile.Transport.AuthKey = ""
+	return yaml.Marshal(profile)
+}
+
+func (a *App) ImportPersonalCard() (launchpad.PersonalCard, error) {
+	path, err := wailsruntime.OpenFileDialog(a.ctx, wailsruntime.OpenDialogOptions{
+		Title: "导入 SSH Launchpad 个人信息卡",
+		Filters: []wailsruntime.FileFilter{
+			{DisplayName: "SSH Launchpad personal card", Pattern: "*.sshlaunchpad-card;*.json"},
+		},
+	})
+	if err != nil || path == "" {
+		return launchpad.PersonalCard{}, err
+	}
+	return launchpad.LoadPersonalCard(path)
+}
+
+func (a *App) ExportPersonalCard(card launchpad.PersonalCard) (string, error) {
+	data, err := launchpad.MarshalPersonalCard(card)
+	if err != nil {
+		return "", err
+	}
+	filename := safeCardFilename(card.DisplayName) + ".sshlaunchpad-card"
+	path, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
+		Title:           "导出 SSH Launchpad 个人信息卡",
+		DefaultFilename: filename,
+		Filters: []wailsruntime.FileFilter{
+			{DisplayName: "SSH Launchpad personal card", Pattern: "*.sshlaunchpad-card"},
+		},
+	})
+	if err != nil || path == "" {
+		return "", err
+	}
+	if !strings.HasSuffix(strings.ToLower(path), ".sshlaunchpad-card") {
+		path += ".sshlaunchpad-card"
+	}
+	return path, os.WriteFile(path, data, 0o600)
+}
+
+func safeCardFilename(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.Map(func(r rune) rune {
+		switch r {
+		case '<', '>', ':', '"', '/', '\\', '|', '?', '*':
+			return '-'
+		default:
+			if r < 32 {
+				return -1
+			}
+			return r
+		}
+	}, value)
+	value = strings.Trim(value, ". ")
+	if value == "" {
+		return "ssh-launchpad-personal"
+	}
+	return value
 }
 
 func (a *App) DiscoverPublicKeys() ([]PublicKeyInfo, error) {

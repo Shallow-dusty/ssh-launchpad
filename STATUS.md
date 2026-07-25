@@ -4,6 +4,25 @@ Last locally verified: 2026-07-29
 
 Current release: [`v0.2.3`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.3)
 
+Release candidate: `v0.2.4`
+
+## v0.2.4 personal cards
+
+- A `.sshlaunchpad-card` can carry personal labels, controller SSH public keys,
+  SSH port, Tailnet/LAN choice, optional Tailscale installation, and an
+  optional one-time or short-lived Tailscale auth key.
+- Import rejects private-key material, unknown fields, malformed public keys,
+  invalid auth keys, oversized files, and trailing JSON values.
+- The auth key is masked in the GUI, represented by an inert marker in Plan and
+  journal data, materialized only for Apply, and redacted from action output
+  and support reports.
+- Import starts with the read-only guided Check. A card with a Tailscale auth
+  key can plan install, Tailnet authorization, SSH, key, service, and restricted
+  firewall work in one user-confirmed Apply.
+- The candidate keeps the existing per-user installer identity and validates
+  an in-place v0.2.3-to-v0.2.4 upgrade. No SSH, Tailscale, or firewall Apply is
+  run on the development workstation.
+
 ## v0.2.3 audit hardening
 
 - Tailnet setup is phased: install transport first, require online sign-in, then

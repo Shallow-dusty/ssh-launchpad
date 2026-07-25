@@ -121,7 +121,15 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 	for _, action := range plan.Actions {
 		result := ActionResult{ActionID: action.ID, Status: "running", Started: time.Now().UTC()}
 		e.emit(StageApply, action.ID, "started", action.Summary, &report)
-		command, cleanupArtifact, err := stageVerifiedActionArtifact(action, action.Command, journalDir, report.ID)
+		materializedCommand, err := materializeActionCommand(action, profile, plan.Platform)
+		if err != nil {
+			result.Status = "failed"
+			result.Error = err.Error()
+			result.Finished = time.Now().UTC()
+			report.Results = append(report.Results, result)
+			return e.failAndRollback(ctx, profile, report, journal, journalPath, completed, opts, err)
+		}
+		command, cleanupArtifact, err := stageVerifiedActionArtifact(action, materializedCommand, journalDir, report.ID)
 		if err != nil {
 			result.Status = "failed"
 			result.Error = err.Error()
@@ -147,6 +155,9 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 			cleanupArtifact()
 		}
 		result.Output = buffer.String()
+		if action.Operation == "authenticate_tailscale" {
+			result.Output = redactText(result.Output)
+		}
 		result.Finished = time.Now().UTC()
 		if err != nil {
 			result.Status = "failed"
@@ -173,6 +184,26 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 	report.ExitCode = ExitOK
 	report.Finished = time.Now().UTC()
 	return report, nil
+}
+
+func materializeActionCommand(action Action, profile Profile, platform Platform) ([]string, error) {
+	if len(action.Command) != 1 || action.Command[0] != tailscaleAuthCommandMarker {
+		return action.Command, nil
+	}
+	key := strings.TrimSpace(profile.Transport.AuthKey)
+	if key == "" {
+		return nil, errors.New("Tailscale authentication was planned without an auth key")
+	}
+	switch platform {
+	case PlatformWindows:
+		quotedKey := strings.ReplaceAll(key, "'", "''")
+		script := fmt.Sprintf(`$ErrorActionPreference='Stop'; $key='%s'; $exe=$null; for($i=0;$i -lt 30 -and !$exe;$i++){ $command=Get-Command tailscale.exe -ErrorAction SilentlyContinue; if($command){$exe=$command.Source}; if(!$exe){$candidate=Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe'; if(Test-Path $candidate){$exe=$candidate}}; if(!$exe){Start-Sleep -Seconds 1} }; if(!$exe){throw 'tailscale.exe was not found after installation'}; & $exe up ("--auth-key="+$key); if($LASTEXITCODE -ne 0){throw 'Tailscale authentication failed'}`, quotedKey)
+		return psCommand(script), nil
+	case PlatformLinux, PlatformWSL, PlatformMacOS:
+		return []string{"tailscale", "up", "--auth-key=" + key}, nil
+	default:
+		return nil, fmt.Errorf("Tailscale authentication is unsupported on platform %q", platform)
+	}
 }
 
 func (e Executor) Rollback(ctx context.Context, journalPath string) (Report, error) {
