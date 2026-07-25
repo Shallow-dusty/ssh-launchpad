@@ -28,7 +28,9 @@ jq -c '.components[]' "$metadata" | while IFS= read -r component; do
   candidate_dir=$(cd -- "$(dirname "$input/$file")" 2>/dev/null && pwd -P) || { echo "payload directory missing: $file" >&2; exit 2; }
   candidate="$candidate_dir/$(basename "$file")"
   case "$candidate" in "$input"/*) ;; *) echo "file escapes INPUT_DIR: $file" >&2; exit 2 ;; esac
-  [ -f "$candidate" ] && [ ! -L "$candidate" ] || { echo "payload missing or symbolic link rejected: $file" >&2; exit 2; }
+  if [ ! -f "$candidate" ] || [ -L "$candidate" ]; then
+    echo "payload missing or symbolic link rejected: $file" >&2; exit 2
+  fi
   mkdir -p "$stage/payload/$(dirname "$file")"
   cp "$candidate" "$stage/payload/$file"
 done

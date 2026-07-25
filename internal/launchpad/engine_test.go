@@ -21,10 +21,10 @@ func (p *sequenceProbe) Check(_ context.Context, _ Profile) (Snapshot, error) {
 
 func TestRepeatedApplyBecomesNoOpAfterStateMatches(t *testing.T) {
 	profile := DefaultProfile()
-	first := healthySnapshot(detectPlatform())
+	first := healthySnapshot(PlatformLinux)
 	first.SSHService.Running = false
 	first.Firewall = FirewallState{Provider: first.Firewall.Provider}
-	second := healthySnapshot(detectPlatform())
+	second := healthySnapshot(PlatformLinux)
 	probe := &sequenceProbe{snapshots: []Snapshot{first, second}}
 	runner := &recordingRunner{}
 	engine := NewEngine(nil)
