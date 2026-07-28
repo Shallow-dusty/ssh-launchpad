@@ -136,6 +136,7 @@ func runStage(stage launchpad.Stage, args []string, options globalOptions) int {
 	profilePath := flags.String("profile", "", tr("profileHelp"))
 	outputPath := flags.String("output", "-", tr("outputHelp"))
 	confirmed := flags.Bool("yes", false, tr("confirmHelp"))
+	planDigest := flags.String("plan-digest", "", tr("planDigestHelp"))
 	allowSelfCut := flags.Bool("allow-self-cut", false, tr("selfCutHelp"))
 	scheduleRisky := flags.Bool("schedule-risky", false, tr("scheduleHelp"))
 	journalDir := flags.String("journal-dir", "", tr("journalHelp"))
@@ -150,12 +151,13 @@ func runStage(stage launchpad.Stage, args []string, options globalOptions) int {
 		return launchpad.ExitInvalidProfile
 	}
 	applyOptions := launchpad.ApplyOptions{
-		Confirmed:      *confirmed,
-		AllowSelfCut:   *allowSelfCut,
-		ScheduleRisky:  *scheduleRisky,
-		AutoRollback:   profile.Safety.AutoRollback,
-		JournalDir:     *journalDir,
-		ExternalVerify: *externalVerify,
+		Confirmed:          *confirmed,
+		ExpectedPlanDigest: *planDigest,
+		AllowSelfCut:       *allowSelfCut,
+		ScheduleRisky:      *scheduleRisky,
+		AutoRollback:       profile.Safety.AutoRollback,
+		JournalDir:         *journalDir,
+		ExternalVerify:     *externalVerify,
 	}
 	report, err := executeStage(stage, profile, applyOptions, *outputPath != "-" && !options.jsonOnly)
 	if stage == launchpad.StageApply && report.ExitCode == launchpad.ExitNeedsElevation && *confirmed && isInteractiveTerminal() && !options.nonInteractive {
@@ -263,7 +265,11 @@ func runWizard(options globalOptions) int {
 		return finishWizard(reader, launchpad.ExitOK)
 	}
 
-	applyOptions := launchpad.ApplyOptions{Confirmed: true, AutoRollback: profile.Safety.AutoRollback}
+	applyOptions := launchpad.ApplyOptions{
+		Confirmed:          true,
+		ExpectedPlanDigest: planReport.Plan.Digest,
+		AutoRollback:       profile.Safety.AutoRollback,
+	}
 	apply, applyErr := executeStage(launchpad.StageApply, profile, applyOptions, true)
 	code := apply.ExitCode
 	if code == launchpad.ExitNeedsElevation {

@@ -41,6 +41,54 @@ function Get-Architecture {
     }
 }
 
+function Invoke-HttpsDownloadOnce {
+    param(
+        [Parameter(Mandatory)] [uri]$Uri,
+        [Parameter(Mandatory)] [string]$Destination
+    )
+
+    Add-Type -AssemblyName System.Net.Http
+    $handler = [System.Net.Http.HttpClientHandler]::new()
+    $handler.AllowAutoRedirect = $false
+    if ($ProxyUrl) {
+        $handler.Proxy = [System.Net.WebProxy]::new($ProxyUrl)
+        $handler.UseProxy = $true
+    }
+    $client = [System.Net.Http.HttpClient]::new($handler)
+    try {
+        $current = $Uri
+        for ($redirect = 0; $redirect -le 10; $redirect++) {
+            if ($current.Scheme -ne 'https') {
+                throw (Get-Text "已拒绝非 HTTPS 下载或重定向：$current" "Refusing non-HTTPS download or redirect: $current")
+            }
+            $response = $client.GetAsync($current, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+            try {
+                $status = [int]$response.StatusCode
+                if ($status -ge 300 -and $status -lt 400) {
+                    if (-not $response.Headers.Location) { throw "Redirect response omitted Location: $current" }
+                    $current = [uri]::new($current, $response.Headers.Location)
+                    continue
+                }
+                $response.EnsureSuccessStatusCode() | Out-Null
+                $input = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+                try {
+                    $output = [IO.File]::Open($Destination, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+                    try { $input.CopyTo($output) }
+                    finally { $output.Dispose() }
+                }
+                finally { $input.Dispose() }
+                return
+            }
+            finally { $response.Dispose() }
+        }
+        throw "Too many HTTPS redirects: $Uri"
+    }
+    finally {
+        $client.Dispose()
+        $handler.Dispose()
+    }
+}
+
 function Invoke-Download {
     param(
         [Parameter(Mandatory)] [uri]$Uri,
@@ -53,16 +101,7 @@ function Invoke-Download {
     $attempts = 3
     for ($attempt = 1; $attempt -le $attempts; $attempt++) {
         try {
-            $parameters = @{
-                Uri = $Uri
-                OutFile = $Destination
-                UseBasicParsing = $true
-                ErrorAction = 'Stop'
-            }
-            if ($ProxyUrl) {
-                $parameters.Proxy = $ProxyUrl
-            }
-            Invoke-WebRequest @parameters
+            Invoke-HttpsDownloadOnce -Uri $Uri -Destination $Destination
             return
         }
         catch {

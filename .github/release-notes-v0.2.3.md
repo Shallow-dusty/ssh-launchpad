@@ -15,13 +15,16 @@ This release hardens the guided SSH setup flow after a full cross-layer audit.
   creating the managed restricted rule.
 - Distinguishes a real UAC cancellation from helper failures and preserves
   arguments whose paths contain spaces.
-- Uses one digest-checked privilege protocol for the GUI and CLI, with fixed
-  ordinary-user-owned response files and reparse-point-safe elevated writes.
+- Binds confirmation to a canonical plan digest and carries it through one
+  digest-checked GUI/CLI privilege protocol, with fixed ordinary-user-owned
+  response files and reparse-point-safe elevated writes.
 - Replaces age-only process locking, validates generated PowerShell/POSIX
   commands with native parsers and ShellCheck, and resolves release notes from
   the pushed tag.
-- Hardens downloads, bootstraps, offline packs, archive paths, report
-  redaction, installer upgrades, and uninstall boundaries.
+- Fails closed on unknown authentication/firewall evidence and extra firewall
+  scopes; invalid journals return nonzero and rollback is idempotent.
+- Hardens downloads, hash-pinned offline execution, bootstraps, offline packs,
+  archive paths, report redaction, installer upgrades, and bounded uninstall.
 
 ## Distribution
 

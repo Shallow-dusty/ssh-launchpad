@@ -205,7 +205,7 @@ export function renderConfirmActions(state: ViewState, t: Translate): string {
 
 function resultBanner(kind: "good" | "warn" | "bad", title: string, body: string, t: Translate): string {
   const icon = kind === "good" ? checkIcon() : kind === "warn" ? warningIcon() : closeIcon();
-  return `<section class="result-banner ${kind}" role="status"><span>${icon}</span><div><p>${t("simpleSummary")}</p><h2>${title}</h2><p>${body}</p></div></section>`;
+  return `<section class="result-banner ${kind}" role="status"><span>${icon}</span><div><p>${t("simpleSummary")}</p><h2>${escapeHtml(title)}</h2><p>${escapeHtml(body)}</p></div></section>`;
 }
 
 function plainCard(label: string, value: string, note: string, icon: string): string {
@@ -246,7 +246,7 @@ function humanActionIcon(action: PlanAction): string {
 
 function renderFriendlyProgress(state: ViewState, t: Translate): string {
   if (!state.progress.length) return `<p class="progress-note">${state.installState === "waiting-for-permission" ? t("waitingUACBody") : t("installingBody")}</p>`;
-  return `<ol class="friendly-progress">${state.progress.map((event) => `<li class="${event.kind}"><span>${event.kind === "completed" ? checkIcon() : `<i></i>`}</span><div><b>${event.actionId ? humanActionLabel({ operation: operationFromID(event.actionId) } as PlanAction, t) : t("installing")}</b><p>${simpleEvent(state.language, event)}</p></div></li>`).join("")}</ol>`;
+  return `<ol class="friendly-progress">${state.progress.map((event) => `<li class="${event.kind}"><span>${event.kind === "completed" ? checkIcon() : `<i></i>`}</span><div><b>${event.actionId ? humanActionLabel({ operation: operationFromID(event.actionId) } as PlanAction, t) : t("installing")}</b><p>${escapeHtml(simpleEvent(state.language, event))}</p></div></li>`).join("")}</ol>`;
 }
 
 function operationFromID(id: string): string {
@@ -265,8 +265,14 @@ function missingCount(snapshot: Snapshot, profile: Profile): number {
     snapshot.sshServer.installed,
     snapshot.sshService.running,
     snapshot.sshConfigValid,
+    snapshot.sshAuthenticationChecked,
+    snapshot.sshPubkeyAuthentication,
+    snapshot.sshPasswordAuthentication === profile.ssh.passwordAuthentication,
+    !snapshot.sshKbdInteractiveAuthentication,
+    snapshot.sshAuthorizedKeysFileChecked,
+    snapshot.authorizedKeysChecked && (profile.ssh.passwordAuthentication || snapshot.authorizedKeysCount > 0),
     profile.transport.mode !== "tailnet" || snapshot.tailscale.online,
-    snapshot.firewall.ports?.includes(profile.ssh.port)
+    snapshot.firewall.checked && snapshot.firewall.enabled && !snapshot.firewall.broadExposure && snapshot.firewall.ports?.includes(profile.ssh.port)
   ];
   return requirements.filter((value) => !value).length;
 }

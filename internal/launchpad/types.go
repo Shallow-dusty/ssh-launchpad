@@ -78,6 +78,7 @@ type DownloadProfile struct {
 	MirrorBaseURL string `json:"mirrorBaseUrl,omitempty" yaml:"mirrorBaseUrl,omitempty"`
 	ProxyURL      string `json:"proxyUrl,omitempty" yaml:"proxyUrl,omitempty"`
 	OfflineBundle string `json:"offlineBundle,omitempty" yaml:"offlineBundle,omitempty"`
+	OfflineSHA256 string `json:"offlineSha256,omitempty" yaml:"offlineSha256,omitempty"`
 	CacheDir      string `json:"cacheDir,omitempty" yaml:"cacheDir,omitempty"`
 	Retries       int    `json:"retries" yaml:"retries"`
 }
@@ -97,28 +98,35 @@ type AdvancedProfile struct {
 }
 
 type Snapshot struct {
-	Timestamp             time.Time      `json:"timestamp"`
-	Platform              Platform       `json:"platform"`
-	Arch                  string         `json:"arch"`
-	Hostname              string         `json:"hostname"`
-	TargetUser            string         `json:"targetUser,omitempty"`
-	TargetUserIsAdmin     bool           `json:"targetUserIsAdmin"`
-	IsAdministrator       bool           `json:"isAdministrator"`
-	SessionTransport      string         `json:"sessionTransport"`
-	PackageManager        string         `json:"packageManager,omitempty"`
-	SSHClient             Capability     `json:"sshClient"`
-	SSHServer             Capability     `json:"sshServer"`
-	SSHService            ServiceState   `json:"sshService"`
-	SSHPort               int            `json:"sshPort,omitempty"`
-	SSHConfigValid        bool           `json:"sshConfigValid"`
-	AuthorizedKeysChecked bool           `json:"authorizedKeysChecked"`
-	AuthorizedKeysMatch   bool           `json:"authorizedKeysMatch"`
-	Firewall              FirewallState  `json:"firewall"`
-	Tailscale             TransportState `json:"tailscale"`
-	Network               NetworkState   `json:"network"`
-	PlatformDetails       map[string]any `json:"platformDetails,omitempty"`
-	Warnings              []string       `json:"warnings,omitempty"`
-	ProbeErrors           []string       `json:"probeErrors,omitempty"`
+	Timestamp                       time.Time      `json:"timestamp"`
+	Platform                        Platform       `json:"platform"`
+	Arch                            string         `json:"arch"`
+	Hostname                        string         `json:"hostname"`
+	TargetUser                      string         `json:"targetUser,omitempty"`
+	TargetUserIsAdmin               bool           `json:"targetUserIsAdmin"`
+	IsAdministrator                 bool           `json:"isAdministrator"`
+	SessionTransport                string         `json:"sessionTransport"`
+	PackageManager                  string         `json:"packageManager,omitempty"`
+	SSHClient                       Capability     `json:"sshClient"`
+	SSHServer                       Capability     `json:"sshServer"`
+	SSHService                      ServiceState   `json:"sshService"`
+	SSHPort                         int            `json:"sshPort,omitempty"`
+	SSHConfigValid                  bool           `json:"sshConfigValid"`
+	SSHAuthenticationChecked        bool           `json:"sshAuthenticationChecked"`
+	SSHPasswordAuthentication       bool           `json:"sshPasswordAuthentication"`
+	SSHKbdInteractiveAuthentication bool           `json:"sshKbdInteractiveAuthentication"`
+	SSHPubkeyAuthentication         bool           `json:"sshPubkeyAuthentication"`
+	SSHAuthorizedKeysFileChecked    bool           `json:"sshAuthorizedKeysFileChecked"`
+	SSHAuthorizedKeysFile           string         `json:"sshAuthorizedKeysFile,omitempty"`
+	AuthorizedKeysChecked           bool           `json:"authorizedKeysChecked"`
+	AuthorizedKeysMatch             bool           `json:"authorizedKeysMatch"`
+	AuthorizedKeysCount             int            `json:"authorizedKeysCount"`
+	Firewall                        FirewallState  `json:"firewall"`
+	Tailscale                       TransportState `json:"tailscale"`
+	Network                         NetworkState   `json:"network"`
+	PlatformDetails                 map[string]any `json:"platformDetails,omitempty"`
+	Warnings                        []string       `json:"warnings,omitempty"`
+	ProbeErrors                     []string       `json:"probeErrors,omitempty"`
 }
 
 type Capability struct {
@@ -135,6 +143,8 @@ type ServiceState struct {
 }
 
 type FirewallState struct {
+	Checked              bool     `json:"checked"`
+	Enabled              bool     `json:"enabled"`
 	Provider             string   `json:"provider,omitempty"`
 	Ports                []int    `json:"ports,omitempty"`
 	Scopes               []string `json:"scopes,omitempty"`
@@ -176,6 +186,7 @@ type Action struct {
 
 type Plan struct {
 	Timestamp       time.Time `json:"timestamp"`
+	Digest          string    `json:"digest"`
 	ProfileName     string    `json:"profileName"`
 	Platform        Platform  `json:"platform"`
 	ReadOnly        bool      `json:"readOnly"`
@@ -225,6 +236,7 @@ type Report struct {
 
 type Journal struct {
 	SchemaVersion int            `json:"schemaVersion"`
+	Digest        string         `json:"digest,omitempty"`
 	ID            string         `json:"id"`
 	Created       time.Time      `json:"created"`
 	ProfileName   string         `json:"profileName"`
@@ -234,12 +246,13 @@ type Journal struct {
 }
 
 type ApplyOptions struct {
-	Confirmed      bool
-	AllowSelfCut   bool
-	ScheduleRisky  bool
-	AutoRollback   bool
-	JournalDir     string
-	ExternalVerify string
+	Confirmed          bool
+	ExpectedPlanDigest string
+	AllowSelfCut       bool
+	ScheduleRisky      bool
+	AutoRollback       bool
+	JournalDir         string
+	ExternalVerify     string
 }
 
 type EventSink func(Event)

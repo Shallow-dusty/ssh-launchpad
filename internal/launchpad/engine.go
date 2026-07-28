@@ -57,7 +57,24 @@ func (e *Engine) Apply(ctx context.Context, profile Profile, opts ApplyOptions) 
 	if err != nil {
 		return planReport, err
 	}
+	if opts.Confirmed {
+		if strings.TrimSpace(opts.ExpectedPlanDigest) == "" {
+			return failedApplyReport(profile.Name, planReport.Plan, ExitConfirmationRequired, "Apply requires the digest of the explicitly reviewed plan.")
+		}
+		if !strings.EqualFold(strings.TrimSpace(opts.ExpectedPlanDigest), planReport.Plan.Digest) {
+			return failedApplyReport(profile.Name, planReport.Plan, ExitConfirmationRequired, "The machine state or profile changed after Plan. Review and confirm the new plan before Apply.")
+		}
+	}
 	return e.Executor.Apply(ctx, profile, *planReport.Plan, opts)
+}
+
+func failedApplyReport(profile string, plan *Plan, code int, message string) (Report, error) {
+	report := newReport(StageApply, profile, time.Now().UTC())
+	report.Plan = plan
+	report.ExitCode = code
+	report.Error = message
+	report.Finished = time.Now().UTC()
+	return report, errors.New(message)
 }
 
 func (e *Engine) Verify(ctx context.Context, profile Profile) (Report, error) {

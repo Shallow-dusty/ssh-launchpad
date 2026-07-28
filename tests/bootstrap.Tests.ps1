@@ -17,8 +17,9 @@ Describe 'PowerShell bootstrap safety' {
         if ($content -notmatch 'Invoke-Download') { throw 'Downloader missing' }
     }
 
-    It 'requires HTTPS and SHA-256' {
+    It 'requires HTTPS for initial and redirected URLs plus SHA-256' {
         if ($content -notmatch "Scheme -ne 'https'") { throw 'HTTPS gate missing' }
+        if ($content -notmatch 'AllowAutoRedirect\s*=\s*\$false') { throw 'manual redirect validation missing' }
         if ($content -notmatch 'Get-FileHash -Algorithm SHA256') { throw 'SHA-256 verification missing' }
     }
 

@@ -6,7 +6,7 @@
 2. SSH Launchpad GitHub Release assets.
 3. A user-specified HTTPS mirror.
 4. A user-specified proxy transporting the same verified artifact.
-5. A local offline bundle with its adjacent checksum manifest.
+5. A local offline bundle with an explicitly pinned SHA-256.
 6. A previously downloaded, checksum-verified cache.
 
 Tailscale installation follows the same principle: use a trusted system package
@@ -16,7 +16,9 @@ pipe network content into a shell.
 ## Integrity and availability
 
 - HTTPS is mandatory for network sources.
-- SHA-256 is mandatory before installation or extraction.
+- SHA-256 is mandatory before installation or extraction. Offline executables
+  are copied into privileged staging while hashing, and only those staged bytes
+  are executed.
 - The Go downloader supports retry with exponential backoff, `.part` files,
   HTTP range resume, and cache reuse only after validation.
 - The bootstrap scripts retry and cache release assets. A hash mismatch aborts

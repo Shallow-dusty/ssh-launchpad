@@ -8,17 +8,42 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type Planner struct{}
 
-func (Planner) Build(profile Profile, snapshot Snapshot) Plan {
-	plan := Plan{
+func (Planner) Build(profile Profile, snapshot Snapshot) (plan Plan) {
+	plan = Plan{
 		Timestamp:   time.Now().UTC(),
 		ProfileName: profile.Name,
 		Platform:    snapshot.Platform,
 		ReadOnly:    true,
 		HighestRisk: RiskLow,
+	}
+	defer func() {
+		for index := range plan.Actions {
+			if snapshot.SessionTransport == "ssh" && isSelfCutOperation(plan.Actions[index].Operation) {
+				plan.Actions[index].SelfCutRisk = true
+				if plan.Actions[index].Risk == RiskLow || plan.Actions[index].Risk == RiskMedium {
+					plan.Actions[index].Risk = RiskHigh
+				}
+				plan.SelfCutDetected = true
+			}
+			if riskRank(plan.Actions[index].Risk) > riskRank(plan.HighestRisk) {
+				plan.HighestRisk = plan.Actions[index].Risk
+			}
+		}
+		plan.NoChanges = len(plan.Actions) == 0 && len(plan.Blockers) == 0
+		plan.Digest = PlanDigest(profile, plan)
+	}()
+	if profile.Target.Platform != PlatformAuto && profile.Target.Platform != snapshot.Platform {
+		plan.Blockers = append(plan.Blockers, fmt.Sprintf("The profile targets %s, but this process detected %s. Apply is blocked on the wrong target platform.", profile.Target.Platform, snapshot.Platform))
+		return plan
+	}
+	if profile.Target.WSL && snapshot.Platform != PlatformWSL {
+		plan.Blockers = append(plan.Blockers, "The profile requires a WSL target, but this process is not running inside WSL.")
+		return plan
 	}
 	if !profile.SSH.Enabled {
 		plan.NoChanges = true
@@ -43,8 +68,20 @@ func (Planner) Build(profile Profile, snapshot Snapshot) Plan {
 	if !snapshot.SSHClient.Installed || !snapshot.SSHServer.Installed {
 		plan.Actions = append(plan.Actions, installSSHAction(profile, snapshot))
 	}
-	if snapshot.SSHPort != profile.SSH.Port || snapshot.SSHPort == 0 {
+	configDrift := snapshot.SSHPort != profile.SSH.Port || snapshot.SSHPort == 0 ||
+		!snapshot.SSHConfigValid || !snapshot.SSHAuthenticationChecked ||
+		snapshot.SSHPasswordAuthentication != profile.SSH.PasswordAuthentication ||
+		snapshot.SSHKbdInteractiveAuthentication || !snapshot.SSHPubkeyAuthentication
+	if configDrift {
 		plan.Actions = append(plan.Actions, configureSSHAction(profile, snapshot))
+	}
+	if !profile.SSH.PasswordAuthentication && len(profile.SSH.PublicKeys) == 0 {
+		switch {
+		case !snapshot.AuthorizedKeysChecked:
+			plan.Blockers = append(plan.Blockers, "Password authentication is disabled, but the existing authorized_keys file could not be verified. Declare a controller public key or fix access before Apply.")
+		case snapshot.AuthorizedKeysCount == 0:
+			plan.Blockers = append(plan.Blockers, "Password authentication is disabled and no usable public key exists. Declare at least one controller public key before Apply.")
+		}
 	}
 	if len(profile.SSH.PublicKeys) > 0 && !snapshot.AuthorizedKeysChecked {
 		plan.Blockers = append(plan.Blockers, "The target authorized_keys file could not be verified. Fix its permissions or run Check with sufficient access before applying.")
@@ -53,11 +90,22 @@ func (Planner) Build(profile Profile, snapshot Snapshot) Plan {
 	}
 	if profile.Exposure.Mode != "none" && !firewallMatches(snapshot.Firewall, profile, snapshot) {
 		scopes := exposureScopes(profile, snapshot)
-		if len(snapshot.Firewall.UnresolvedBroadRules) > 0 {
+		switch {
+		case !snapshot.Firewall.Checked:
+			plan.Blockers = append(plan.Blockers, "The firewall state could not be verified. Apply is blocked until Check can read the complete port-and-scope rule set.")
+		case !snapshot.Firewall.Enabled:
+			plan.Blockers = append(plan.Blockers, "The detected firewall provider is not active on every relevant profile. Enable it before exposing SSH.")
+		case !supportedFirewallProvider(snapshot.Platform, snapshot.Firewall.Provider):
+			plan.Blockers = append(plan.Blockers, "No supported firewall provider is available for this target; SSH exposure cannot be verified safely.")
+		case len(snapshot.Firewall.UnresolvedBroadRules) > 0:
 			plan.Blockers = append(plan.Blockers, "Broad inbound firewall rules that cover multiple ports also expose SSH. Review them manually before Apply: "+strings.Join(snapshot.Firewall.UnresolvedBroadRules, ", "))
-		} else if len(scopes) == 0 {
+		case snapshot.Firewall.BroadExposure && !(snapshot.Platform == PlatformWindows && len(snapshot.Firewall.ConflictingRules) > 0):
+			plan.Blockers = append(plan.Blockers, "An existing broad inbound rule exposes the SSH port and cannot be safely remediated automatically. Restrict or remove it before Apply.")
+		case hasUnexpectedFirewallScopes(snapshot.Firewall, scopes, snapshot.Platform == PlatformWindows && len(snapshot.Firewall.ConflictingRules) > 0):
+			plan.Blockers = append(plan.Blockers, "Existing inbound rules expose the SSH port to source networks outside the requested scope. Review and remove those rules before Apply.")
+		case len(scopes) == 0:
 			plan.Blockers = append(plan.Blockers, "No safe source network could be detected for the requested exposure mode. Choose explicit CIDRs or connect the target to the intended network.")
-		} else {
+		default:
 			action := configureFirewallAction(profile, snapshot, scopes)
 			if len(action.Command) == 0 {
 				plan.Blockers = append(plan.Blockers, action.Reason)
@@ -69,19 +117,6 @@ func (Planner) Build(profile Profile, snapshot Snapshot) Plan {
 	if !snapshot.SSHService.Running || snapshot.SSHService.StartPolicy == "disabled" {
 		plan.Actions = append(plan.Actions, enableSSHAction(profile, snapshot))
 	}
-	for i := range plan.Actions {
-		if snapshot.SessionTransport == "ssh" && isSelfCutOperation(plan.Actions[i].Operation) {
-			plan.Actions[i].SelfCutRisk = true
-			if plan.Actions[i].Risk == RiskLow || plan.Actions[i].Risk == RiskMedium {
-				plan.Actions[i].Risk = RiskHigh
-			}
-			plan.SelfCutDetected = true
-		}
-		if riskRank(plan.Actions[i].Risk) > riskRank(plan.HighestRisk) {
-			plan.HighestRisk = plan.Actions[i].Risk
-		}
-	}
-	plan.NoChanges = len(plan.Actions) == 0 && len(plan.Blockers) == 0
 	return plan
 }
 
@@ -113,6 +148,10 @@ func installTailscaleAction(profile Profile, snapshot Snapshot) Action {
 	case PlatformWindows:
 		if profile.Download.Strategy == "offline" {
 			a.Command = []string{profile.Download.OfflineBundle, "/quiet"}
+			a.Params = map[string]string{
+				"artifactPath":   profile.Download.OfflineBundle,
+				"artifactSHA256": profile.Download.OfflineSHA256,
+			}
 		} else if snapshot.PackageManager == "winget" {
 			a.Command = []string{"winget.exe", "install", "--id", "Tailscale.Tailscale", "--exact", "--accept-package-agreements", "--accept-source-agreements"}
 		} else {
@@ -136,11 +175,11 @@ func installTailscaleAction(profile Profile, snapshot Snapshot) Action {
 }
 
 func configureSSHAction(profile Profile, snapshot Snapshot) Action {
-	a := baseAction("configure-sshd", "configure_sshd", "ssh-config", RiskHigh, fmt.Sprintf("Set SSH port %d and key-oriented authentication", profile.SSH.Port), "The current listener does not match the profile.")
+	a := baseAction("configure-sshd", "configure_sshd", "ssh-config", RiskHigh, fmt.Sprintf("Set SSH port %d and key-oriented authentication", profile.SSH.Port), "The effective SSH port, configuration validity, or authentication policy does not match the profile.")
 	a.RequiresElevation = true
 	a.Reversible = true
 	stamp := time.Now().UTC().Format("20060102T150405Z")
-	block := fmt.Sprintf("# BEGIN SSH-LAUNCHPAD\nPort %d\nPubkeyAuthentication yes\nPasswordAuthentication %s\n# END SSH-LAUNCHPAD\n", profile.SSH.Port, yesNo(profile.SSH.PasswordAuthentication))
+	block := fmt.Sprintf("# BEGIN SSH-LAUNCHPAD\nPort %d\nPubkeyAuthentication yes\nPasswordAuthentication %s\nKbdInteractiveAuthentication no\nChallengeResponseAuthentication no\n# END SSH-LAUNCHPAD\n", profile.SSH.Port, yesNo(profile.SSH.PasswordAuthentication))
 	encoded := base64.StdEncoding.EncodeToString([]byte(block))
 	switch snapshot.Platform {
 	case PlatformWindows:
@@ -262,8 +301,8 @@ func configureFirewallAction(profile Profile, snapshot Snapshot, scopes []string
 			}
 			add = append(add, "firewall-cmd --reload")
 			remove = append(remove, "firewall-cmd --reload")
-			a.Command = unixCommand(strings.Join(add, "; "))
-			a.RollbackCommand = unixCommand(strings.Join(remove, "; "))
+			a.Command = unixCommand("set -eu; " + strings.Join(add, "; "))
+			a.RollbackCommand = unixCommand("set -eu; " + strings.Join(remove, "; "))
 		default:
 			var add, remove []string
 			for _, scope := range scopes {
@@ -271,8 +310,8 @@ func configureFirewallAction(profile Profile, snapshot Snapshot, scopes []string
 				add = append(add, "ufw "+args)
 				remove = append(remove, "ufw --force delete "+args)
 			}
-			a.Command = unixCommand(strings.Join(add, "; "))
-			a.RollbackCommand = unixCommand(strings.Join(remove, "; "))
+			a.Command = unixCommand("set -eu; " + strings.Join(add, "; "))
+			a.RollbackCommand = unixCommand("set -eu; " + strings.Join(remove, "; "))
 		}
 	}
 	a.Params = map[string]string{"ruleName": name, "scopes": strings.Join(scopes, ",")}
@@ -284,16 +323,66 @@ func baseAction(id, operation, layer string, risk Risk, summary, reason string) 
 }
 
 func firewallMatches(state FirewallState, profile Profile, snapshot Snapshot) bool {
-	if state.BroadExposure || !containsInt(state.Ports, profile.SSH.Port) {
+	if !state.Checked || !state.Enabled || !supportedFirewallProvider(snapshot.Platform, state.Provider) || state.BroadExposure || len(state.UnresolvedBroadRules) > 0 || !containsInt(state.Ports, profile.SSH.Port) {
 		return false
 	}
-	text := strings.ToLower(strings.Join(state.Scopes, " "))
-	for _, scope := range exposureScopes(profile, snapshot) {
-		if !strings.Contains(text, strings.ToLower(scope)) {
+	desired := firewallScopeSet(exposureScopes(profile, snapshot))
+	existing := firewallScopeSet(state.Scopes)
+	if len(desired) == 0 || len(existing) != len(desired) {
+		return false
+	}
+	for scope := range desired {
+		if !existing[scope] {
 			return false
 		}
 	}
 	return true
+}
+
+func hasUnexpectedFirewallScopes(state FirewallState, desiredScopes []string, ignoreRemediableBroad bool) bool {
+	desired := firewallScopeSet(desiredScopes)
+	for scope := range firewallScopeSet(state.Scopes) {
+		if ignoreRemediableBroad && broadFirewallScope(scope) {
+			continue
+		}
+		if !desired[scope] {
+			return true
+		}
+	}
+	return false
+}
+
+func firewallScopeSet(scopes []string) map[string]bool {
+	result := map[string]bool{}
+	for _, raw := range scopes {
+		parts := strings.FieldsFunc(raw, func(value rune) bool {
+			return value == ',' || unicode.IsSpace(value)
+		})
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if _, network, err := net.ParseCIDR(part); err == nil {
+				part = network.String()
+			}
+			result[strings.ToLower(part)] = true
+		}
+	}
+	return result
+}
+
+func supportedFirewallProvider(platform Platform, provider string) bool {
+	switch platform {
+	case PlatformWindows:
+		return provider == "windows-firewall"
+	case PlatformLinux, PlatformWSL:
+		return provider == "ufw" || provider == "firewall-cmd"
+	case PlatformMacOS:
+		return provider == "application-firewall"
+	default:
+		return false
+	}
 }
 
 func exposureScopes(profile Profile, snapshot Snapshot) []string {

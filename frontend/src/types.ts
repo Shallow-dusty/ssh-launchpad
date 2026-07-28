@@ -13,6 +13,7 @@ export interface Profile {
     mirrorBaseUrl: string;
     proxyUrl: string;
     offlineBundle: string;
+    offlineSha256: string;
     cacheDir: string;
     retries: number;
   };
@@ -45,9 +46,16 @@ export interface Snapshot {
   sshService: { name?: string; installed: boolean; running: boolean; startPolicy?: string };
   sshPort?: number;
   sshConfigValid: boolean;
+  sshAuthenticationChecked: boolean;
+  sshPasswordAuthentication: boolean;
+  sshKbdInteractiveAuthentication: boolean;
+  sshPubkeyAuthentication: boolean;
+  sshAuthorizedKeysFileChecked: boolean;
+  sshAuthorizedKeysFile?: string;
   authorizedKeysChecked: boolean;
   authorizedKeysMatch: boolean;
-  firewall: { provider?: string; ports?: number[]; scopes?: string[]; broadExposure?: boolean; conflictingRules?: string[]; unresolvedBroadRules?: string[] };
+  authorizedKeysCount: number;
+  firewall: { checked: boolean; enabled: boolean; provider?: string; ports?: number[]; scopes?: string[]; broadExposure?: boolean; conflictingRules?: string[]; unresolvedBroadRules?: string[] };
   tailscale: { installed: boolean; online: boolean; ip?: string; state?: string };
   network: { githubDns: boolean; tailscaleDns: boolean; proxySet: boolean; lanIps?: string[]; lanScopes?: string[] };
   warnings?: string[];
@@ -67,6 +75,7 @@ export interface PlanAction {
 }
 
 export interface Plan {
+  digest: string;
   noChanges: boolean;
   highestRisk: Risk;
   selfCutDetected: boolean;
@@ -92,6 +101,7 @@ export interface Report {
 export interface DesktopRequest {
   stage: Stage;
   profile: Profile;
+  planDigest: string;
   confirmed: boolean;
   allowSelfCut: boolean;
   scheduleRisky: boolean;

@@ -34,6 +34,8 @@ if ($existing.Count -ne 0) {
 }
 
 $installed = $false
+$installDirectory = $null
+$sentinel = $null
 try {
     Invoke-SilentInstaller $base
     $installed = $true
@@ -89,6 +91,15 @@ finally {
         $uninstaller = if ($entry) { $entry.UninstallString.Trim('"') } else { '' }
         if ($uninstaller -and (Test-Path -LiteralPath $uninstaller)) {
             Invoke-SilentInstaller $uninstaller
+        }
+        if ($sentinel -and -not (Test-Path -LiteralPath $sentinel)) {
+            throw 'Uninstall removed an unrelated sentinel file from the install directory.'
+        }
+        if ($sentinel -and (Test-Path -LiteralPath $sentinel)) {
+            Remove-Item -LiteralPath $sentinel -Force
+        }
+        if ($installDirectory -and (Test-Path -LiteralPath $installDirectory)) {
+            Remove-Item -LiteralPath $installDirectory -Force
         }
     }
     if ((Get-LaunchpadEntries).Count -ne 0) {

@@ -32,6 +32,9 @@ func targetUserIdentity() (string, bool) {
 }
 
 func authorizedKeysPath(snapshot Snapshot) (string, error) {
+	if snapshot.SSHAuthorizedKeysFile != "" {
+		return snapshot.SSHAuthorizedKeysFile, nil
+	}
 	if snapshot.TargetUserIsAdmin {
 		programData := os.Getenv("ProgramData")
 		if programData == "" {

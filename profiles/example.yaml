@@ -24,6 +24,7 @@ download:
   mirrorBaseUrl: ""
   proxyUrl: ""
   offlineBundle: ""
+  offlineSha256: ""
   cacheDir: ""
   retries: 3
 

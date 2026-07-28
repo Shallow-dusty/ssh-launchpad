@@ -23,7 +23,8 @@ does not require ANSI color.
 - Real Apply was not run on the development workstation or a personal remote
   host.
 - Windows UAC request integrity, cancellation, progress return, and mock Apply
-  are tested; the final disposable-VM servicing/interrupt matrix remains v0.3.
+  are tested. A minimum disposable-VM Apply/Verify/Rollback smoke is a v0.2.3
+  release gate; the expanded servicing and interruption matrix remains v0.3.
 - Linux/macOS adapters are exercised by native CI and generated-command tests,
   not by changing a production host.
 - On Linux/macOS, `ufw status` and `firewall-cmd --list-rich-rules` may return a

@@ -10,6 +10,10 @@ import (
 	"github.com/Shallow-dusty/ssh-launchpad/internal/launchpad"
 )
 
+func confirmedApplyOptions() launchpad.ApplyOptions {
+	return launchpad.ApplyOptions{Confirmed: true, ExpectedPlanDigest: strings.Repeat("a", 64)}
+}
+
 func TestRequestDigestRejectsTampering(t *testing.T) {
 	directory := t.TempDir()
 	responsePath := filepath.Join(directory, "response.json")
@@ -18,7 +22,7 @@ func TestRequestDigestRejectsTampering(t *testing.T) {
 	}
 	request := NewRequest(
 		launchpad.DefaultProfile(),
-		launchpad.ApplyOptions{Confirmed: true},
+		confirmedApplyOptions(),
 		responsePath,
 		"",
 		"en",
@@ -39,6 +43,18 @@ func TestRequestDigestRejectsTampering(t *testing.T) {
 	}
 }
 
+func TestElevationRequestRequiresReviewedPlanDigest(t *testing.T) {
+	directory := t.TempDir()
+	responsePath := filepath.Join(directory, "response.json")
+	if err := PrecreateFile(responsePath); err != nil {
+		t.Fatal(err)
+	}
+	request := NewRequest(launchpad.DefaultProfile(), launchpad.ApplyOptions{Confirmed: true}, responsePath, "", "en")
+	if _, err := WriteRequest(filepath.Join(directory, "request.json"), request); err == nil {
+		t.Fatal("elevation request without reviewed plan digest was accepted")
+	}
+}
+
 func TestWriteRequestRefusesExistingPath(t *testing.T) {
 	directory := t.TempDir()
 	responsePath := filepath.Join(directory, "response.json")
@@ -51,7 +67,7 @@ func TestWriteRequestRefusesExistingPath(t *testing.T) {
 	}
 	request := NewRequest(
 		launchpad.DefaultProfile(),
-		launchpad.ApplyOptions{Confirmed: true},
+		confirmedApplyOptions(),
 		responsePath,
 		"",
 		"en",
@@ -76,7 +92,7 @@ func TestVerifiedRequestCannotRedirectElevatedOutput(t *testing.T) {
 	}
 	request := NewRequest(
 		launchpad.DefaultProfile(),
-		launchpad.ApplyOptions{Confirmed: true},
+		confirmedApplyOptions(),
 		filepath.Join(t.TempDir(), "unrelated.json"),
 		"",
 		"en",

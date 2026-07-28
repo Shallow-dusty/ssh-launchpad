@@ -31,7 +31,10 @@ func targetUserIdentity() (string, bool) {
 	return name, os.Geteuid() == 0
 }
 
-func authorizedKeysPath(_ Snapshot) (string, error) {
+func authorizedKeysPath(snapshot Snapshot) (string, error) {
+	if snapshot.SSHAuthorizedKeysFile != "" {
+		return snapshot.SSHAuthorizedKeysFile, nil
+	}
 	home, err := targetUserHome()
 	if err != nil {
 		return "", err

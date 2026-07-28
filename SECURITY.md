@@ -15,8 +15,10 @@ known workaround. Do not attach real private keys, tokens, or unredacted logs.
 
 ## Security guarantees
 
-Check and Plan are read-only. Verify does not elevate. Apply requires explicit
-confirmation and blocks control-channel self-cut by default. Network downloads
-require HTTPS and SHA-256 verification.
+Check and Plan are read-only. Verify does not elevate and fails closed when SSH
+authentication or firewall evidence is unknown. Apply requires the reviewed
+Plan digest, explicit confirmation, and blocks control-channel self-cut by
+default. Network downloads require HTTPS and SHA-256 verification; offline
+executables require an explicit SHA-256 pin.
 
 These guarantees are bugs if violated and should be reported privately.

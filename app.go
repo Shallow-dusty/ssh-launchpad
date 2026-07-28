@@ -29,6 +29,7 @@ type App struct {
 type DesktopRequest struct {
 	Stage          launchpad.Stage   `json:"stage"`
 	Profile        launchpad.Profile `json:"profile"`
+	PlanDigest     string            `json:"planDigest,omitempty"`
 	Confirmed      bool              `json:"confirmed"`
 	AllowSelfCut   bool              `json:"allowSelfCut"`
 	ScheduleRisky  bool              `json:"scheduleRisky"`
@@ -63,7 +64,7 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) DefaultProfile() launchpad.Profile {
-	return launchpad.DefaultProfile()
+	return normalizeDesktopProfile(launchpad.DefaultProfile())
 }
 
 func (a *App) ValidatePublicKey(value string) error {
@@ -75,6 +76,7 @@ func (a *App) CheckForUpdate() (launchpad.UpdateInfo, error) {
 }
 
 func (a *App) Run(request DesktopRequest) (launchpad.Report, error) {
+	request.Profile = normalizeDesktopProfile(request.Profile)
 	if err := request.Profile.Validate(); err != nil {
 		return launchpad.Report{ExitCode: launchpad.ExitInvalidProfile, Error: err.Error()}, err
 	}
@@ -85,11 +87,12 @@ func (a *App) Run(request DesktopRequest) (launchpad.Report, error) {
 		return a.engine.Plan(a.ctx, request.Profile)
 	case launchpad.StageApply:
 		return a.engine.Apply(a.ctx, request.Profile, launchpad.ApplyOptions{
-			Confirmed:      request.Confirmed,
-			AllowSelfCut:   request.AllowSelfCut,
-			ScheduleRisky:  request.ScheduleRisky,
-			AutoRollback:   request.Profile.Safety.AutoRollback,
-			ExternalVerify: request.ExternalVerify,
+			Confirmed:          request.Confirmed,
+			ExpectedPlanDigest: request.PlanDigest,
+			AllowSelfCut:       request.AllowSelfCut,
+			ScheduleRisky:      request.ScheduleRisky,
+			AutoRollback:       request.Profile.Safety.AutoRollback,
+			ExternalVerify:     request.ExternalVerify,
 		})
 	case launchpad.StageVerify:
 		return a.engine.Verify(a.ctx, request.Profile)
@@ -102,13 +105,7 @@ func (a *App) BeginElevatedApply(request DesktopRequest) (ElevatedJob, error) {
 	if request.Stage != launchpad.StageApply || !request.Confirmed {
 		return ElevatedJob{}, errors.New("safe install requires an explicitly confirmed Apply request")
 	}
-	if runtime.GOOS == "windows" && strings.TrimSpace(request.Profile.Advanced.StateDir) == "" {
-		programData := os.Getenv("ProgramData")
-		if programData == "" {
-			programData = `C:\ProgramData`
-		}
-		request.Profile.Advanced.StateDir = filepath.Join(programData, "SSH Launchpad")
-	}
+	request.Profile = normalizeDesktopProfile(request.Profile)
 	if err := request.Profile.Validate(); err != nil {
 		return ElevatedJob{}, err
 	}
@@ -116,15 +113,19 @@ func (a *App) BeginElevatedApply(request DesktopRequest) (ElevatedJob, error) {
 	if err != nil {
 		return ElevatedJob{}, err
 	}
-	if planReport.Plan == nil || planReport.Plan.NoChanges {
-		report, applyErr := a.engine.Apply(a.ctx, request.Profile, launchpad.ApplyOptions{
-			Confirmed:      true,
-			AllowSelfCut:   request.AllowSelfCut,
-			ScheduleRisky:  request.ScheduleRisky,
-			AutoRollback:   request.Profile.Safety.AutoRollback,
-			ExternalVerify: request.ExternalVerify,
-		})
-		return ElevatedJob{ID: report.ID, State: "completed", Report: &report, Error: errorText(applyErr)}, nil
+	if planReport.Plan == nil {
+		return ElevatedJob{}, errors.New("safe install could not produce a plan")
+	}
+	if strings.TrimSpace(request.PlanDigest) == "" || !strings.EqualFold(strings.TrimSpace(request.PlanDigest), planReport.Plan.Digest) {
+		return ElevatedJob{}, errors.New("the machine state or profile changed; review the new plan before safe install")
+	}
+	if planReport.Plan.NoChanges {
+		report, applyErr := a.engine.Apply(a.ctx, request.Profile, desktopApplyOptions(request))
+		state := "failed"
+		if report.Success {
+			state = "completed"
+		}
+		return ElevatedJob{ID: report.ID, State: state, Report: &report, Error: errorText(applyErr)}, nil
 	}
 	id, err := newJobID()
 	if err != nil {
@@ -257,13 +258,25 @@ func (a *App) runDirectJob(record *elevatedJobRecord, request DesktopRequest) {
 	}
 }
 
+func normalizeDesktopProfile(profile launchpad.Profile) launchpad.Profile {
+	if runtime.GOOS == "windows" && strings.TrimSpace(profile.Advanced.StateDir) == "" {
+		programData := os.Getenv("ProgramData")
+		if programData == "" {
+			programData = `C:\ProgramData`
+		}
+		profile.Advanced.StateDir = filepath.Join(programData, "SSH Launchpad")
+	}
+	return profile
+}
+
 func desktopApplyOptions(request DesktopRequest) launchpad.ApplyOptions {
 	return launchpad.ApplyOptions{
-		Confirmed:      true,
-		AllowSelfCut:   request.AllowSelfCut,
-		ScheduleRisky:  request.ScheduleRisky,
-		AutoRollback:   request.Profile.Safety.AutoRollback,
-		ExternalVerify: request.ExternalVerify,
+		Confirmed:          true,
+		ExpectedPlanDigest: request.PlanDigest,
+		AllowSelfCut:       request.AllowSelfCut,
+		ScheduleRisky:      request.ScheduleRisky,
+		AutoRollback:       request.Profile.Safety.AutoRollback,
+		ExternalVerify:     request.ExternalVerify,
 	}
 }
 

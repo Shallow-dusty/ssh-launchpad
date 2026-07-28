@@ -18,9 +18,16 @@ export async function mockRun(request: DesktopRequest): Promise<Report> {
     sshService: { name: "sshd", installed: configured, running: configured, startPolicy: configured ? "Automatic" : "Manual" },
     sshPort: configured ? request.profile.ssh.port : 0,
     sshConfigValid: true,
+    sshAuthenticationChecked: true,
+    sshPasswordAuthentication: false,
+    sshKbdInteractiveAuthentication: false,
+    sshPubkeyAuthentication: true,
+    sshAuthorizedKeysFileChecked: true,
+    sshAuthorizedKeysFile: "C:\\ProgramData\\ssh\\administrators_authorized_keys",
     authorizedKeysChecked: true,
     authorizedKeysMatch: configured,
-    firewall: { provider: "windows-firewall", ports: configured ? [request.profile.ssh.port] : [], scopes: configured ? ["100.64.0.0/10", "fd7a:115c:a1e0::/48"] : [] },
+    authorizedKeysCount: configured ? 1 : 0,
+    firewall: { checked: true, enabled: true, provider: "windows-firewall", ports: configured ? [request.profile.ssh.port] : [], scopes: configured ? ["100.64.0.0/10", "fd7a:115c:a1e0::/48"] : [] },
     tailscale: { installed: true, online: true, ip: "100.64.10.25", state: "Running" },
     network: { githubDns: true, tailscaleDns: true, proxySet: false, lanIps: ["192.168.1.25"], lanScopes: ["192.168.1.0/24"] }
   };
@@ -32,7 +39,7 @@ export async function mockRun(request: DesktopRequest): Promise<Report> {
     exitCode: request.stage === "verify" && !configured ? 3 : 0,
     profileName: request.profile.name,
     snapshot,
-    plan: { noChanges: actions.length === 0, highestRisk: actions.length ? "high" : "low", selfCutDetected: false, actions }
+    plan: { digest: `mock-${request.profile.ssh.port}-${actions.length}`, noChanges: actions.length === 0, highestRisk: actions.length ? "high" : "low", selfCutDetected: false, actions }
   };
 }
 

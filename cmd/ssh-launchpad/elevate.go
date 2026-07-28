@@ -16,8 +16,12 @@ func executeElevatedRequest(profile launchpad.Profile, options launchpad.ApplyOp
 		return false, launchpad.ExitNeedsElevation, err
 	}
 	defer os.RemoveAll(directory)
-	if windows && profile.Advanced.StateDir == "" {
-		profile.Advanced.StateDir = filepath.Join(os.Getenv("ProgramData"), "SSH Launchpad")
+	if windows && options.JournalDir == "" {
+		programData := os.Getenv("ProgramData")
+		if programData == "" {
+			programData = `C:\ProgramData`
+		}
+		options.JournalDir = filepath.Join(programData, "SSH Launchpad")
 	}
 	responsePath := filepath.Join(directory, "response.json")
 	if err := elevationprotocol.PrecreateFile(responsePath); err != nil {

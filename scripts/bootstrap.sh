@@ -78,9 +78,9 @@ download() {
     *) say "已拒绝非 HTTPS 下载：$uri" "Refusing non-HTTPS download: $uri" >&2; exit 8 ;;
   esac
   if [ -n "$PROXY_URL" ]; then
-    curl --fail --location --retry 3 --retry-all-errors --continue-at - --proxy "$PROXY_URL" --output "$destination" "$uri"
+    curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 --retry-all-errors --continue-at - --proxy "$PROXY_URL" --output "$destination" "$uri"
   else
-    curl --fail --location --retry 3 --retry-all-errors --continue-at - --output "$destination" "$uri"
+    curl --fail --location --proto '=https' --proto-redir '=https' --retry 3 --retry-all-errors --continue-at - --output "$destination" "$uri"
   fi
 }
 

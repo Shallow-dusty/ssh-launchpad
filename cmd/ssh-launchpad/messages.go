@@ -66,6 +66,7 @@ var zhMessages = map[string]string{
 	"profileHelp":             "JSON 或 YAML 高级配置文件",
 	"outputHelp":              "报告文件路径；- 表示标准输出",
 	"confirmHelp":             "确认执行 Apply",
+	"planDigestHelp":          "已检查 Plan 的 digest；状态变化时拒绝执行",
 	"selfCutHelp":             "允许可能切断当前远程连接的操作",
 	"scheduleHelp":            "延迟执行高风险控制通道操作",
 	"journalHelp":             "恢复记录目录",
@@ -79,7 +80,7 @@ var zhMessages = map[string]string{
 常用命令：
   ssh-launchpad check                         只检查，不改动
   ssh-launchpad plan --profile profile.yaml   查看将要改什么
-  ssh-launchpad apply --profile profile.yaml --yes
+  ssh-launchpad apply --profile profile.yaml --yes --plan-digest <Plan 中的 digest>
   ssh-launchpad verify --profile profile.yaml
   ssh-launchpad rollback --journal <记录文件>
   ssh-launchpad update                        只检查稳定版更新
@@ -153,6 +154,7 @@ var enMessages = map[string]string{
 	"profileHelp":             "JSON or YAML advanced profile",
 	"outputHelp":              "report path, or - for standard output",
 	"confirmHelp":             "confirm Apply",
+	"planDigestHelp":          "digest of the reviewed Plan; changed state is rejected",
 	"selfCutHelp":             "allow an action that could cut the active connection",
 	"scheduleHelp":            "schedule risky control-path work after a delay",
 	"journalHelp":             "rollback journal directory",
@@ -166,7 +168,7 @@ Double-click or run without arguments: open the interactive wizard
 Common commands:
   ssh-launchpad check                         check only; no changes
   ssh-launchpad plan --profile profile.yaml   review exact changes
-  ssh-launchpad apply --profile profile.yaml --yes
+  ssh-launchpad apply --profile profile.yaml --yes --plan-digest <digest from Plan>
   ssh-launchpad verify --profile profile.yaml
   ssh-launchpad rollback --journal <record>
   ssh-launchpad update                        check the stable channel only

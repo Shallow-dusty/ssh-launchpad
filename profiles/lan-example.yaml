@@ -5,7 +5,8 @@ target:
 ssh:
   enabled: true
   port: 22
-  publicKeys: []
+  publicKeys:
+    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB example-replace-with-controller-key
   passwordAuthentication: false
 transport:
   mode: lan
@@ -19,6 +20,7 @@ download:
   mirrorBaseUrl: ""
   proxyUrl: ""
   offlineBundle: ""
+  offlineSha256: ""
   cacheDir: ""
   retries: 3
 safety:

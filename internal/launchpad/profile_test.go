@@ -2,6 +2,7 @@ package launchpad
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -12,6 +13,19 @@ func TestProfileRejectsPrivateKeyAndBadCIDR(t *testing.T) {
 	p.Exposure.CustomCIDRs = []string{"not-a-network"}
 	if err := p.Validate(); err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+func TestOfflineProfileRequiresPinnedSHA256(t *testing.T) {
+	profile := DefaultProfile()
+	profile.Download.Strategy = "offline"
+	profile.Download.OfflineBundle = "installer.exe"
+	if err := profile.Validate(); err == nil {
+		t.Fatal("offline artifact without SHA-256 was accepted")
+	}
+	profile.Download.OfflineSHA256 = strings.Repeat("a", 64)
+	if err := profile.Validate(); err != nil {
+		t.Fatalf("valid pinned offline artifact rejected: %v", err)
 	}
 }
 

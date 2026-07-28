@@ -40,9 +40,11 @@ instance is a Linux target with an explicit WSL platform identity; Windows
 service and firewall state is never inferred from it.
 
 The planner produces inspectable commands, risk, elevation, reversibility, and
-self-cut metadata. The executor refuses unconfirmed high-risk work and writes a
-journal before mutations. Platform commands are intentionally declarative so
-unit tests can validate them on any CI runner. Windows-generated commands are
+self-cut metadata. A canonical SHA-256 digest binds confirmation to the reviewed
+profile and executable plan; Apply aborts if a fresh Plan differs. The executor
+refuses unconfirmed work and writes an integrity-digested journal before
+mutations. Platform commands are intentionally declarative so unit tests can
+validate them on any CI runner. Windows-generated commands are
 parsed by PowerShell; Unix-generated commands are checked by `sh -n` and
 ShellCheck on native CI.
 
@@ -62,5 +64,7 @@ Every stage returns JSON schema version 1. Exit codes are stable:
 | 8 | download failure |
 | 9 | unsupported platform or capability |
 
-Reports keep network reachability, service health, configuration validity, and
-authentication as separate evidence.
+Reports keep network reachability, service health, effective authentication,
+configuration validity, authorized-key evidence, and firewall confidence as
+separate fields. Verify fails closed when authentication or firewall evidence is
+unknown.

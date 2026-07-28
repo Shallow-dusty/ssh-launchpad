@@ -59,7 +59,8 @@ Linux 文件管理器也可能要求先允许执行；详情见包内双语离�
 ```text
 ssh-launchpad check --output check.json
 ssh-launchpad plan --profile profiles/example.yaml --output plan.json
-ssh-launchpad apply --profile profiles/example.yaml --yes
+# 审阅 plan.json 后，把 plan.digest 原样传给 Apply；状态变化会拒绝执行
+ssh-launchpad apply --profile profiles/example.yaml --yes --plan-digest COPY_PLAN_DIGEST_HERE
 ssh-launchpad verify --profile profiles/example.yaml --output verify.json
 ```
 
@@ -87,6 +88,7 @@ open `Start SSH Launchpad.cmd`. The language switch is always available and pers
 - [故障排查与恢复](docs/troubleshooting.md)
 - [开发与构建](docs/development.md)
 - [Release 验证](docs/release-verification.md)
+- [v0.2.3 安全审计与发布门禁](docs/v0.2.3-security-audit.md)
 - [安全策略](SECURITY.md)
 
 MIT License。

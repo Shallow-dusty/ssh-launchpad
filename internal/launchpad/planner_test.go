@@ -7,22 +7,33 @@ import (
 )
 
 func healthySnapshot(platform Platform) Snapshot {
-	return Snapshot{
-		Timestamp:             time.Now(),
-		Platform:              platform,
-		IsAdministrator:       true,
-		SessionTransport:      "local",
-		PackageManager:        "apt-get",
-		SSHClient:             Capability{Installed: true},
-		SSHServer:             Capability{Installed: true},
-		SSHService:            ServiceState{Name: "sshd", Installed: true, Running: true, StartPolicy: "enabled"},
-		SSHPort:               22,
-		SSHConfigValid:        true,
-		AuthorizedKeysChecked: true,
-		AuthorizedKeysMatch:   true,
-		Tailscale:             TransportState{Installed: true, Online: true, IP: "100.64.0.1"},
-		Firewall:              FirewallState{Provider: "ufw", Ports: []int{22}, Scopes: []string{"100.64.0.0/10 fd7a:115c:a1e0::/48"}},
+	snapshot := Snapshot{
+		Timestamp:                 time.Now(),
+		Platform:                  platform,
+		IsAdministrator:           true,
+		SessionTransport:          "local",
+		PackageManager:            "apt-get",
+		SSHClient:                 Capability{Installed: true},
+		SSHServer:                 Capability{Installed: true},
+		SSHService:                ServiceState{Name: "sshd", Installed: true, Running: true, StartPolicy: "enabled"},
+		SSHPort:                   22,
+		SSHConfigValid:            true,
+		SSHAuthenticationChecked:  true,
+		SSHPasswordAuthentication: false,
+		SSHPubkeyAuthentication:   true,
+		AuthorizedKeysChecked:     true,
+		AuthorizedKeysMatch:       true,
+		AuthorizedKeysCount:       1,
+		Tailscale:                 TransportState{Installed: true, Online: true, IP: "100.64.0.1"},
+		Firewall:                  FirewallState{Checked: true, Enabled: true, Provider: "ufw", Ports: []int{22}, Scopes: []string{"100.64.0.0/10 fd7a:115c:a1e0::/48"}},
 	}
+	switch platform {
+	case PlatformWindows:
+		snapshot.Firewall.Provider = "windows-firewall"
+	case PlatformMacOS:
+		snapshot.Firewall.Provider = "application-firewall"
+	}
+	return snapshot
 }
 
 func TestPlannerIsIdempotentWhenStateMatches(t *testing.T) {
@@ -39,7 +50,7 @@ func TestPlannerSeparatesInstallConfigServiceAndFirewall(t *testing.T) {
 	s := healthySnapshot(PlatformWindows)
 	s.SSHServer = Capability{}
 	s.SSHService = ServiceState{Name: "sshd"}
-	s.Firewall = FirewallState{}
+	s.Firewall = FirewallState{Checked: true, Enabled: true, Provider: "windows-firewall"}
 	plan := (Planner{}).Build(p, s)
 	got := map[string]bool{}
 	for _, action := range plan.Actions {
@@ -91,7 +102,7 @@ func TestFirewallCommandIsPortAndScopeAware(t *testing.T) {
 	p := DefaultProfile()
 	p.SSH.Port = 2222
 	s := healthySnapshot(PlatformWindows)
-	s.Firewall = FirewallState{}
+	s.Firewall = FirewallState{Checked: true, Enabled: true, Provider: "windows-firewall"}
 	plan := (Planner{}).Build(p, s)
 	for _, action := range plan.Actions {
 		if action.Operation == "configure_firewall" {
@@ -109,7 +120,7 @@ func TestFirewallIsConfiguredBeforeStartingANewSSHService(t *testing.T) {
 	profile := DefaultProfile()
 	snapshot := healthySnapshot(PlatformWindows)
 	snapshot.SSHService.Running = false
-	snapshot.Firewall = FirewallState{}
+	snapshot.Firewall = FirewallState{Checked: true, Enabled: true, Provider: "windows-firewall"}
 	plan := (Planner{}).Build(profile, snapshot)
 	firewallIndex, serviceIndex := -1, -1
 	for index, action := range plan.Actions {
@@ -159,9 +170,28 @@ func TestTailnetSetupIsPhasedAndRequiresOnlineTransport(t *testing.T) {
 	}
 }
 
+func TestOfflineTransportInstallerIsHashPinnedInPlan(t *testing.T) {
+	profile := DefaultProfile()
+	profile.Transport.Install = true
+	profile.Download.Strategy = "offline"
+	profile.Download.OfflineBundle = `C:\Offline\tailscale.exe`
+	profile.Download.OfflineSHA256 = strings.Repeat("a", 64)
+	snapshot := healthySnapshot(PlatformWindows)
+	snapshot.Tailscale = TransportState{}
+	plan := (Planner{}).Build(profile, snapshot)
+	if len(plan.Actions) != 1 {
+		t.Fatalf("unexpected offline install plan: %#v", plan)
+	}
+	action := plan.Actions[0]
+	if action.Operation != "install_tailscale" || action.Params["artifactPath"] != profile.Download.OfflineBundle || action.Params["artifactSHA256"] != profile.Download.OfflineSHA256 {
+		t.Fatalf("offline installer is not bound to path and SHA-256: %#v", action)
+	}
+}
+
 func TestBroadWindowsFirewallRuleIsAConflict(t *testing.T) {
 	profile := DefaultProfile()
 	snapshot := healthySnapshot(PlatformWindows)
+	snapshot.Firewall.Provider = "windows-firewall"
 	snapshot.Firewall.BroadExposure = true
 	snapshot.Firewall.ConflictingRules = []string{"OpenSSH-Server-In-TCP"}
 	plan := (Planner{}).Build(profile, snapshot)
@@ -177,13 +207,64 @@ func TestBroadWindowsFirewallRuleIsAConflict(t *testing.T) {
 	t.Fatal("broad exposure should require a replacement firewall rule")
 }
 
+func TestInvalidSSHConfigurationAndMissingAuthenticationCannotVerifyAsReady(t *testing.T) {
+	profile := DefaultProfile()
+	snapshot := healthySnapshot(PlatformLinux)
+	snapshot.SSHConfigValid = false
+	snapshot.AuthorizedKeysCount = 0
+	plan := (Planner{}).Build(profile, snapshot)
+	if plan.NoChanges || len(plan.Blockers) == 0 {
+		t.Fatalf("invalid config without a usable key must not verify as ready: %#v", plan)
+	}
+	foundConfigRepair := false
+	for _, action := range plan.Actions {
+		foundConfigRepair = foundConfigRepair || action.Operation == "configure_sshd"
+	}
+	if !foundConfigRepair {
+		t.Fatal("invalid SSH configuration did not produce a repair action")
+	}
+}
+
+func TestFirewallUnknownOrUnexpectedScopeBlocksApply(t *testing.T) {
+	profile := DefaultProfile()
+	unknown := healthySnapshot(PlatformLinux)
+	unknown.Firewall.Checked = false
+	plan := (Planner{}).Build(profile, unknown)
+	if len(plan.Blockers) == 0 {
+		t.Fatal("unknown firewall state must block Apply")
+	}
+
+	disabled := healthySnapshot(PlatformLinux)
+	disabled.Firewall.Enabled = false
+	plan = (Planner{}).Build(profile, disabled)
+	if len(plan.Blockers) == 0 {
+		t.Fatal("disabled firewall must block Apply")
+	}
+
+	extra := healthySnapshot(PlatformLinux)
+	extra.Firewall.Scopes = append(extra.Firewall.Scopes, "203.0.113.0/24")
+	plan = (Planner{}).Build(profile, extra)
+	if plan.NoChanges || len(plan.Blockers) == 0 {
+		t.Fatalf("an extra firewall scope must block Apply: %#v", plan)
+	}
+}
+
+func TestExplicitTargetPlatformMismatchBlocksApply(t *testing.T) {
+	profile := DefaultProfile()
+	profile.Target.Platform = PlatformWindows
+	plan := (Planner{}).Build(profile, healthySnapshot(PlatformLinux))
+	if len(plan.Blockers) == 0 || plan.NoChanges {
+		t.Fatalf("wrong target platform was not blocked: %#v", plan)
+	}
+}
+
 func TestLANUsesDetectedUnixScopes(t *testing.T) {
 	profile := DefaultProfile()
 	profile.Transport.Mode = "lan"
 	profile.Exposure.Mode = "lan"
 	snapshot := healthySnapshot(PlatformLinux)
 	snapshot.Network.LANScopes = []string{"192.168.10.0/24", "fd00:10::/64"}
-	snapshot.Firewall = FirewallState{Provider: "ufw"}
+	snapshot.Firewall = FirewallState{Checked: true, Enabled: true, Provider: "ufw"}
 	plan := (Planner{}).Build(profile, snapshot)
 	for _, action := range plan.Actions {
 		if action.Operation == "configure_firewall" {

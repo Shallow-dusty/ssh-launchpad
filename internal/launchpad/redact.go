@@ -53,9 +53,10 @@ func redactValue(value any) any {
 	case map[string]any:
 		for key, item := range typed {
 			lower := strings.ToLower(key)
-			if strings.Contains(lower, "token") || strings.Contains(lower, "cookie") || strings.Contains(lower, "privatekey") ||
+			sensitiveName := strings.Contains(lower, "token") || strings.Contains(lower, "cookie") || strings.Contains(lower, "privatekey") ||
 				strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "credential") ||
-				strings.Contains(lower, "authorization") || strings.Contains(lower, "authkey") {
+				strings.Contains(lower, "authorization") || strings.Contains(lower, "authkey")
+			if _, isString := item.(string); sensitiveName && isString {
 				typed[key] = "<redacted>"
 			} else {
 				typed[key] = redactValue(item)

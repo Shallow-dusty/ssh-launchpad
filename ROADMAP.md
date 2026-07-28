@@ -28,19 +28,22 @@
 - Safe phased Tailnet setup and an explicit LAN-only guided route.
 - Correct controller-key selection, validation, merge, target-user ownership,
   and idempotent verification.
-- SSH configuration precedence, broad-firewall conflict remediation, complete
-  CIDR rollback, journal integrity, and truthful blocker reporting.
-- Hardened bootstraps, offline-pack builders, cross-platform launchers,
-  installer path boundaries, report redaction, and patched Go toolchain.
+- SSH configuration precedence, fail-closed authentication/firewall evidence,
+  exact CIDR matching, complete rollback, and truthful exit codes.
+- Confirmation bound to a canonical Plan digest; integrity-digested,
+  ownership-checked, idempotent rollback journals.
+- Hash-pinned staged offline execution, hardened bootstraps and offline-pack
+  builders, bounded uninstall, report redaction, and patched Go toolchain.
 - Shared GUI/CLI elevation protocol, safe privileged output handling, live-PID
   concurrency locks, generated-command parser tests, and HTTPS-only downloads.
+- Minimum disposable Windows VM Apply/Verify/Rollback evidence before release.
 - Tag-derived release notes and a modularized frontend with transport-aware
   health counting.
 
 ## v0.3.0 candidates
 
-- Disposable Windows Sandbox/VM real Apply, interrupted servicing, repeat Apply,
-  cleanup, and uninstall-state matrix.
+- Expanded Windows Sandbox/VM interrupted servicing, repeat Apply, cleanup, and
+  uninstall-state matrix.
 - Disposable Ubuntu and macOS Apply/rollback validation.
 - Controller-side real TCP, SSH handshake, authentication, identity, and host
   fingerprint pairing assistant.

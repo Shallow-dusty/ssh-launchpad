@@ -3,8 +3,10 @@ package launchpad
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -103,13 +105,13 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 		journalDir = stateDir(profile)
 	}
 	if err := os.MkdirAll(journalDir, 0o700); err != nil {
-		return report, err
+		return finishReportError(report, ExitPartialFailure, fmt.Errorf("create journal directory: %w", err))
 	}
 	journal := Journal{SchemaVersion: SchemaVersion, ID: report.ID, Created: started, ProfileName: profile.Name, Status: "running", Actions: plan.Actions}
 	journalPath := filepath.Join(journalDir, report.ID+".journal.json")
 	report.JournalPath = journalPath
-	if err := writeJSONAtomic(journalPath, journal); err != nil {
-		return report, err
+	if err := writeJournalAtomic(journalPath, &journal); err != nil {
+		return finishReportError(report, ExitPartialFailure, fmt.Errorf("persist journal before Apply: %w", err))
 	}
 	runner := e.Runner
 	if runner == nil {
@@ -119,11 +121,19 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 	for _, action := range plan.Actions {
 		result := ActionResult{ActionID: action.ID, Status: "running", Started: time.Now().UTC()}
 		e.emit(StageApply, action.ID, "started", action.Summary, &report)
-		command := action.Command
-		if action.SelfCutRisk && opts.ScheduleRisky {
-			var err error
+		command, cleanupArtifact, err := stageVerifiedActionArtifact(action, action.Command, journalDir, report.ID)
+		if err != nil {
+			result.Status = "failed"
+			result.Error = err.Error()
+			result.Finished = time.Now().UTC()
+			report.Results = append(report.Results, result)
+			return e.failAndRollback(ctx, profile, report, journal, journalPath, completed, opts, err)
+		}
+		scheduled := action.SelfCutRisk && opts.ScheduleRisky
+		if scheduled {
 			command, err = scheduledCommand(command, profile.Safety.ScheduledDelaySecond, action.ID)
 			if err != nil {
+				cleanupArtifact()
 				result.Status = "failed"
 				result.Error = err.Error()
 				result.Finished = time.Now().UTC()
@@ -132,7 +142,10 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 			}
 		}
 		var buffer safeBuffer
-		err := runner.Run(ctx, command, &buffer)
+		err = runner.Run(ctx, command, &buffer)
+		if !scheduled || err != nil {
+			cleanupArtifact()
+		}
 		result.Output = buffer.String()
 		result.Finished = time.Now().UTC()
 		if err != nil {
@@ -147,13 +160,13 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 		completed = append(completed, action)
 		e.emit(StageApply, action.ID, "completed", result.Status, &report)
 		journal.Results = report.Results
-		if err := writeJSONAtomic(journalPath, journal); err != nil {
+		if err := writeJournalAtomic(journalPath, &journal); err != nil {
 			return e.failAndRollback(ctx, profile, report, journal, journalPath, completed, opts, fmt.Errorf("persist journal after %s: %w", action.ID, err))
 		}
 	}
 	journal.Status = "completed"
 	journal.Results = report.Results
-	if err := writeJSONAtomic(journalPath, journal); err != nil {
+	if err := writeJournalAtomic(journalPath, &journal); err != nil {
 		return e.failAndRollback(ctx, profile, report, journal, journalPath, completed, opts, fmt.Errorf("finalize journal: %w", err))
 	}
 	report.Success = true
@@ -165,22 +178,25 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 func (e Executor) Rollback(ctx context.Context, journalPath string) (Report, error) {
 	started := time.Now().UTC()
 	report := newReport(StageRollback, "", started)
-	data, err := os.ReadFile(journalPath)
+	report.JournalPath = journalPath
+	journal, err := readJournal(journalPath)
 	if err != nil {
-		return report, err
-	}
-	var journal Journal
-	if err := json.Unmarshal(data, &journal); err != nil {
-		return report, err
+		return finishReportError(report, ExitInvalidProfile, fmt.Errorf("read rollback journal: %w", err))
 	}
 	report.ProfileName = journal.ProfileName
+	if journal.Status == "rolled-back" {
+		report.Success = true
+		report.ExitCode = ExitOK
+		report.Finished = time.Now().UTC()
+		return report, nil
+	}
 	runner := e.Runner
 	if runner == nil {
 		runner = OSCommandRunner{}
 	}
 	for i := len(journal.Actions) - 1; i >= 0; i-- {
 		action := journal.Actions[i]
-		if !action.Reversible || len(action.RollbackCommand) == 0 || !resultCompleted(journal.Results, action.ID) {
+		if !action.Reversible || len(action.RollbackCommand) == 0 || !resultCompleted(journal.Results, action.ID) || resultHasStatus(journal.Results, action.ID, "rolled-back") {
 			continue
 		}
 		var buffer safeBuffer
@@ -192,10 +208,10 @@ func (e Executor) Rollback(ctx context.Context, journalPath string) (Report, err
 					result.Error = "could not cancel scheduled action: " + cancelErr.Error()
 					result.Finished = time.Now().UTC()
 					report.Results = append(report.Results, result)
-					report.ExitCode = ExitPartialFailure
-					report.Error = result.Error
-					report.Finished = time.Now().UTC()
-					return report, errors.New(result.Error)
+					journal.Status = "rollback-failed"
+					journal.Results = append(journal.Results, result)
+					_ = writeJournalAtomic(journalPath, &journal)
+					return finishReportError(report, ExitPartialFailure, errors.New(result.Error))
 				}
 			}
 		}
@@ -206,20 +222,21 @@ func (e Executor) Rollback(ctx context.Context, journalPath string) (Report, err
 			result.Status = "rollback-failed"
 			result.Error = err.Error()
 			report.Results = append(report.Results, result)
-			report.ExitCode = ExitPartialFailure
-			report.Error = err.Error()
-			report.Finished = time.Now().UTC()
-			return report, err
+			journal.Status = "rollback-failed"
+			journal.Results = append(journal.Results, result)
+			_ = writeJournalAtomic(journalPath, &journal)
+			return finishReportError(report, ExitPartialFailure, err)
 		}
 		result.Status = "rolled-back"
 		report.Results = append(report.Results, result)
+		journal.Results = append(journal.Results, result)
+		if err := writeJournalAtomic(journalPath, &journal); err != nil {
+			return finishReportError(report, ExitPartialFailure, fmt.Errorf("persist rollback result: %w", err))
+		}
 	}
 	journal.Status = "rolled-back"
-	if err := writeJSONAtomic(journalPath, journal); err != nil {
-		report.ExitCode = ExitPartialFailure
-		report.Error = "Rollback completed but the journal could not be updated: " + err.Error()
-		report.Finished = time.Now().UTC()
-		return report, errors.New(report.Error)
+	if err := writeJournalAtomic(journalPath, &journal); err != nil {
+		return finishReportError(report, ExitPartialFailure, fmt.Errorf("Rollback completed but the journal could not be updated: %w", err))
 	}
 	report.Success = true
 	report.ExitCode = ExitOK
@@ -230,6 +247,10 @@ func (e Executor) Rollback(ctx context.Context, journalPath string) (Report, err
 func (e Executor) failAndRollback(ctx context.Context, profile Profile, report Report, journal Journal, journalPath string, completed []Action, opts ApplyOptions, cause error) (Report, error) {
 	report.Success = false
 	report.ExitCode = ExitPartialFailure
+	var artifactErr *artifactVerificationError
+	if errors.As(cause, &artifactErr) {
+		report.ExitCode = ExitDownloadFailure
+	}
 	report.Error = cause.Error()
 	if opts.AutoRollback || profile.Safety.AutoRollback {
 		runner := e.Runner
@@ -269,7 +290,7 @@ func (e Executor) failAndRollback(ctx context.Context, profile Profile, report R
 	report.Finished = time.Now().UTC()
 	journal.Status = "failed"
 	journal.Results = report.Results
-	if journalErr := writeJSONAtomic(journalPath, journal); journalErr != nil {
+	if journalErr := writeJournalAtomic(journalPath, &journal); journalErr != nil {
 		report.Warnings = append(report.Warnings, "The failure journal could not be updated: "+journalErr.Error())
 	}
 	return report, cause
@@ -388,16 +409,173 @@ func resultHasStatus(results []ActionResult, id, status string) bool {
 	return false
 }
 
-func writeJSONAtomic(path string, value any) error {
-	data, err := json.MarshalIndent(value, "", "  ")
+type artifactVerificationError struct {
+	cause error
+}
+
+func (e *artifactVerificationError) Error() string {
+	return "offline artifact verification failed: " + e.cause.Error()
+}
+
+func (e *artifactVerificationError) Unwrap() error {
+	return e.cause
+}
+
+func stageVerifiedActionArtifact(action Action, command []string, journalDir, reportID string) ([]string, func(), error) {
+	source := strings.TrimSpace(action.Params["artifactPath"])
+	if source == "" {
+		return command, func() {}, nil
+	}
+	expected := strings.TrimSpace(action.Params["artifactSHA256"])
+	decoded, err := hex.DecodeString(expected)
+	if err != nil || len(decoded) != sha256.Size {
+		return nil, func() {}, &artifactVerificationError{cause: errors.New("a valid SHA-256 is required")}
+	}
+	if len(command) == 0 || filepath.Clean(command[0]) != filepath.Clean(source) {
+		return nil, func() {}, &artifactVerificationError{cause: errors.New("the planned executable does not match artifactPath")}
+	}
+	info, err := os.Lstat(source)
+	if err != nil {
+		return nil, func() {}, &artifactVerificationError{cause: err}
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, func() {}, &artifactVerificationError{cause: errors.New("the offline artifact must be a regular non-symlink file")}
+	}
+	input, err := os.Open(source)
+	if err != nil {
+		return nil, func() {}, &artifactVerificationError{cause: err}
+	}
+	defer input.Close()
+	openedInfo, err := input.Stat()
+	if err != nil || !openedInfo.Mode().IsRegular() {
+		if err == nil {
+			err = errors.New("the opened offline artifact is not a regular file")
+		}
+		return nil, func() {}, &artifactVerificationError{cause: err}
+	}
+	stage, err := os.MkdirTemp(journalDir, ".verified-"+sanitizeTaskID(reportID)+"-")
+	if err != nil {
+		return nil, func() {}, &artifactVerificationError{cause: err}
+	}
+	cleanup := func() {
+		_ = os.Remove(filepath.Join(stage, "payload"+filepath.Ext(source)))
+		_ = os.Remove(stage)
+	}
+	destination := filepath.Join(stage, "payload"+filepath.Ext(source))
+	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
+	if err != nil {
+		cleanup()
+		return nil, func() {}, &artifactVerificationError{cause: err}
+	}
+	hash := sha256.New()
+	const maxArtifactBytes = int64(2 * 1024 * 1024 * 1024)
+	written, copyErr := io.Copy(io.MultiWriter(output, hash), io.LimitReader(input, maxArtifactBytes+1))
+	if copyErr == nil && written > maxArtifactBytes {
+		copyErr = errors.New("the offline artifact exceeds the 2 GiB size limit")
+	}
+	if copyErr == nil {
+		copyErr = output.Sync()
+	}
+	if closeErr := output.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr != nil {
+		cleanup()
+		return nil, func() {}, &artifactVerificationError{cause: copyErr}
+	}
+	actual := hex.EncodeToString(hash.Sum(nil))
+	if !strings.EqualFold(actual, expected) {
+		cleanup()
+		return nil, func() {}, &artifactVerificationError{cause: fmt.Errorf("SHA-256 mismatch: expected %s, got %s", expected, actual)}
+	}
+	stagedCommand := append([]string(nil), command...)
+	stagedCommand[0] = destination
+	return stagedCommand, cleanup, nil
+}
+
+func readJournal(path string) (Journal, error) {
+	file, err := openJournalRead(path)
+	if err != nil {
+		return Journal{}, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return Journal{}, err
+	}
+	const maxJournalBytes = 8 * 1024 * 1024
+	if info.Size() > maxJournalBytes {
+		return Journal{}, errors.New("rollback journal exceeds the size limit")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxJournalBytes+1))
+	if err != nil {
+		return Journal{}, err
+	}
+	if len(data) > maxJournalBytes {
+		return Journal{}, errors.New("rollback journal exceeds the size limit")
+	}
+	var journal Journal
+	if err := json.Unmarshal(data, &journal); err != nil {
+		return Journal{}, err
+	}
+	if journal.SchemaVersion != SchemaVersion {
+		return Journal{}, fmt.Errorf("unsupported journal schema %d", journal.SchemaVersion)
+	}
+	if strings.TrimSpace(journal.ID) == "" || len(journal.Actions) > 256 {
+		return Journal{}, errors.New("rollback journal has invalid identity or action count")
+	}
+	if journal.Digest != "" && !strings.EqualFold(journal.Digest, journalDigest(journal)) {
+		return Journal{}, errors.New("rollback journal integrity check failed")
+	}
+	return journal, nil
+}
+
+func journalDigest(journal Journal) string {
+	journal.Digest = ""
+	data, err := json.Marshal(journal)
+	if err != nil {
+		panic(err)
+	}
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:])
+}
+
+func writeJournalAtomic(path string, journal *Journal) error {
+	journal.Digest = journalDigest(*journal)
+	data, err := json.MarshalIndent(journal, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
+	file, err := os.CreateTemp(filepath.Dir(path), ".journal-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := file.Name()
+	defer os.Remove(tmp)
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if _, err := file.Write(append(data, '\n')); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+func finishReportError(report Report, code int, err error) (Report, error) {
+	report.Success = false
+	report.ExitCode = code
+	report.Error = err.Error()
+	report.Finished = time.Now().UTC()
+	return report, err
 }
 
 func newReport(stage Stage, profile string, started time.Time) Report {

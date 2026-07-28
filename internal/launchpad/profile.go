@@ -1,6 +1,8 @@
 package launchpad
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -159,6 +161,9 @@ func (p Profile) Validate() error {
 	if p.Exposure.Mode == "custom" && len(p.Exposure.CustomCIDRs) == 0 {
 		errs = append(errs, errors.New("custom exposure requires customCidrs"))
 	}
+	if len(p.Exposure.CustomCIDRs) > 128 {
+		errs = append(errs, errors.New("exposure.customCidrs may contain at most 128 networks"))
+	}
 	for _, cidr := range p.Exposure.CustomCIDRs {
 		if _, _, err := net.ParseCIDR(cidr); err != nil {
 			errs = append(errs, fmt.Errorf("invalid custom CIDR %q", cidr))
@@ -180,8 +185,14 @@ func (p Profile) Validate() error {
 			errs = append(errs, errors.New("proxyUrl must use http, https, or socks5"))
 		}
 	}
-	if p.Download.Strategy == "offline" && strings.TrimSpace(p.Download.OfflineBundle) == "" {
-		errs = append(errs, errors.New("offline strategy requires offlineBundle"))
+	if p.Download.Strategy == "offline" {
+		if strings.TrimSpace(p.Download.OfflineBundle) == "" {
+			errs = append(errs, errors.New("offline strategy requires offlineBundle"))
+		}
+		digest := strings.TrimSpace(p.Download.OfflineSHA256)
+		if decoded, err := hex.DecodeString(digest); err != nil || len(decoded) != sha256.Size {
+			errs = append(errs, errors.New("offline strategy requires a 64-character offlineSha256"))
+		}
 	}
 	if p.Download.Retries < 0 || p.Download.Retries > 10 {
 		errs = append(errs, errors.New("download.retries must be between 0 and 10"))

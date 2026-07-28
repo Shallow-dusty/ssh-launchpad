@@ -21,7 +21,6 @@ ManifestDPIAware true
 !define MUI_ABORTWARNING
 
 !insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_INSTFILES
@@ -107,15 +106,17 @@ Section "uninstall"
     !insertmacro wails.setShellContext
 
     IfFileExists "$INSTDIR\.ssh-launchpad-install" +3 0
-        MessageBox MB_OK|MB_ICONSTOP "The install marker is missing. Refusing to recursively remove $INSTDIR."
+        MessageBox MB_OK|MB_ICONSTOP "The SSH Launchpad install marker is missing. Refusing to remove application files from $INSTDIR."
         Abort
-    RMDir /r "$AppData\${PRODUCT_EXECUTABLE}"
-    RMDir /r $INSTDIR
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
-
     !insertmacro wails.unassociateFiles
     !insertmacro wails.unassociateCustomProtocols
+
+    RMDir /r "$AppData\${PRODUCT_EXECUTABLE}"
+    Delete "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    Delete "$INSTDIR\.ssh-launchpad-install"
     !insertmacro wails.deleteUninstaller
+    RMDir "$INSTDIR"
 SectionEnd

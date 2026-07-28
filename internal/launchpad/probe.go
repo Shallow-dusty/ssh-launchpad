@@ -1,6 +1,7 @@
 package launchpad
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -41,9 +42,24 @@ func (SystemProbe) Check(ctx context.Context, profile Profile) (Snapshot, error)
 	s.SSHClient = probeCapability(ctx, "ssh", "-V")
 	s.SSHServer, s.SSHService, s.SSHPort = probeSSHServer(ctx, platform, profile)
 	s.SSHConfigValid = probeSSHConfig(ctx, platform, s.SSHServer)
-	s.AuthorizedKeysChecked, s.AuthorizedKeysMatch = probeAuthorizedKeys(s, profile)
-	s.Tailscale = probeTailscale(ctx)
 	s.Network = probeNetwork(ctx)
+	s.Tailscale = probeTailscale(ctx)
+	effective := probeSSHEffectiveConfig(ctx, platform, s.SSHServer, profile, s)
+	if effective.Checked {
+		// sshd -T parsed the complete effective configuration successfully. It
+		// is a sufficient syntax check when an unprivileged probe cannot read
+		// host private keys required by sshd -t.
+		s.SSHConfigValid = true
+		if path, err := resolveEffectiveAuthorizedKeysPath(effective.AuthorizedKeysFile, s); err == nil {
+			s.SSHAuthorizedKeysFileChecked = true
+			s.SSHAuthorizedKeysFile = path
+		}
+	}
+	s.SSHAuthenticationChecked = effective.Checked
+	s.SSHPasswordAuthentication = effective.PasswordAuthentication
+	s.SSHKbdInteractiveAuthentication = effective.KbdInteractiveAuthentication
+	s.SSHPubkeyAuthentication = effective.PubkeyAuthentication
+	s.AuthorizedKeysChecked, s.AuthorizedKeysMatch, s.AuthorizedKeysCount = probeAuthorizedKeys(s, profile)
 	var firewallErr error
 	s.Firewall, firewallErr = probeFirewall(ctx, platform, profile.SSH.Port)
 	if firewallErr != nil {
@@ -153,6 +169,130 @@ func configuredSSHPort(ctx context.Context, sshdPath string) int {
 		return 0
 	}
 	return parseConfiguredSSHPort(out)
+}
+
+type effectiveSSHConfig struct {
+	Checked                      bool
+	PasswordAuthentication       bool
+	KbdInteractiveAuthentication bool
+	PubkeyAuthentication         bool
+	AuthorizedKeysFile           string
+}
+
+func probeSSHEffectiveConfig(ctx context.Context, platform Platform, server Capability, profile Profile, snapshot Snapshot) effectiveSSHConfig {
+	if !server.Installed {
+		return effectiveSSHConfig{}
+	}
+	path := server.Path
+	if path == "" {
+		path, _ = exec.LookPath("sshd")
+	}
+	if path == "" {
+		return effectiveSSHConfig{}
+	}
+	baseArgs := []string{"-T"}
+	if platform == PlatformWindows {
+		programData := os.Getenv("ProgramData")
+		if programData == "" {
+			programData = `C:\ProgramData`
+		}
+		baseArgs = append(baseArgs, "-f", filepath.Join(programData, "ssh", "sshd_config"))
+	}
+	probe := func(connection string) effectiveSSHConfig {
+		args := append([]string(nil), baseArgs...)
+		if connection != "" {
+			args = append(args, "-C", connection)
+		}
+		out, err := runCommand(ctx, 8*time.Second, path, args...)
+		if err != nil {
+			return effectiveSSHConfig{}
+		}
+		return parseEffectiveSSHConfig(out)
+	}
+	combined := probe("")
+	if !combined.Checked {
+		return effectiveSSHConfig{}
+	}
+	if snapshot.TargetUser == "" || strings.ContainsAny(snapshot.TargetUser+snapshot.Hostname, ",\n\r") {
+		return combined
+	}
+	localAddress := authenticationProbeLocalAddress(profile, snapshot)
+	targetAuthorizedKeysFile := ""
+	for _, address := range authenticationProbeAddresses(profile, snapshot) {
+		connection := fmt.Sprintf("user=%s,host=%s,addr=%s,laddr=%s,lport=%d", snapshot.TargetUser, snapshot.Hostname, address, localAddress, profile.SSH.Port)
+		candidate := probe(connection)
+		if !candidate.Checked {
+			return effectiveSSHConfig{}
+		}
+		combined.PasswordAuthentication = combined.PasswordAuthentication || candidate.PasswordAuthentication
+		combined.KbdInteractiveAuthentication = combined.KbdInteractiveAuthentication || candidate.KbdInteractiveAuthentication
+		combined.PubkeyAuthentication = combined.PubkeyAuthentication && candidate.PubkeyAuthentication
+		if candidate.AuthorizedKeysFile == "" || (targetAuthorizedKeysFile != "" && targetAuthorizedKeysFile != candidate.AuthorizedKeysFile) {
+			return effectiveSSHConfig{}
+		}
+		targetAuthorizedKeysFile = candidate.AuthorizedKeysFile
+	}
+	if targetAuthorizedKeysFile != "" {
+		combined.AuthorizedKeysFile = targetAuthorizedKeysFile
+	}
+	return combined
+}
+
+func authenticationProbeLocalAddress(profile Profile, snapshot Snapshot) string {
+	if profile.Exposure.Mode == "tailnet" && snapshot.Tailscale.IP != "" {
+		return snapshot.Tailscale.IP
+	}
+	if len(snapshot.Network.LANIPs) > 0 {
+		return snapshot.Network.LANIPs[0]
+	}
+	return "127.0.0.1"
+}
+
+func authenticationProbeAddresses(profile Profile, snapshot Snapshot) []string {
+	var addresses []string
+	switch profile.Exposure.Mode {
+	case "tailnet":
+		addresses = []string{"100.64.0.1", "fd7a:115c:a1e0::1"}
+	case "lan":
+		for _, scope := range snapshot.Network.LANScopes {
+			if _, network, err := net.ParseCIDR(scope); err == nil {
+				addresses = append(addresses, network.IP.String())
+			}
+		}
+	case "custom":
+		for _, scope := range profile.Exposure.CustomCIDRs {
+			if _, network, err := net.ParseCIDR(scope); err == nil {
+				addresses = append(addresses, network.IP.String())
+			}
+		}
+	}
+	if len(addresses) == 0 {
+		addresses = append(addresses, "127.0.0.1")
+	}
+	if len(addresses) > 8 {
+		addresses = addresses[:8]
+	}
+	return addresses
+}
+
+func parseEffectiveSSHConfig(out []byte) effectiveSSHConfig {
+	values := map[string]string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			values[strings.ToLower(fields[0])] = strings.Join(fields[1:], " ")
+		}
+	}
+	password, hasPassword := values["passwordauthentication"]
+	keyboard, hasKeyboard := values["kbdinteractiveauthentication"]
+	pubkey, hasPubkey := values["pubkeyauthentication"]
+	return effectiveSSHConfig{
+		Checked:                      hasPassword && hasKeyboard && hasPubkey,
+		PasswordAuthentication:       strings.EqualFold(password, "yes"),
+		KbdInteractiveAuthentication: strings.EqualFold(keyboard, "yes"),
+		PubkeyAuthentication:         strings.EqualFold(pubkey, "yes"),
+		AuthorizedKeysFile:           values["authorizedkeysfile"],
+	}
 }
 
 func parseConfiguredSSHPort(out []byte) int {
@@ -277,37 +417,84 @@ func probeSSHConfig(ctx context.Context, platform Platform, server Capability) b
 	return err == nil
 }
 
-func probeAuthorizedKeys(snapshot Snapshot, profile Profile) (bool, bool) {
-	if len(profile.SSH.PublicKeys) == 0 {
-		return true, true
+func resolveEffectiveAuthorizedKeysPath(configured string, snapshot Snapshot) (string, error) {
+	fields := strings.Fields(configured)
+	if len(fields) == 0 {
+		return "", errors.New("effective authorizedkeysfile is empty")
+	}
+	configured = fields[0]
+	home, err := targetUserHome()
+	if err != nil {
+		return "", err
+	}
+	programData := os.Getenv("ProgramData")
+	if programData == "" {
+		programData = `C:\ProgramData`
+	}
+	configured = strings.ReplaceAll(configured, "%h", home)
+	configured = strings.ReplaceAll(configured, "%u", snapshot.TargetUser)
+	const windowsProgramDataMarker = "__PROGRAMDATA__"
+	if strings.HasPrefix(strings.ToUpper(configured), windowsProgramDataMarker) {
+		configured = programData + configured[len(windowsProgramDataMarker):]
+	}
+	configured = filepath.FromSlash(configured)
+	if strings.Contains(configured, "%") {
+		return "", errors.New("effective authorizedkeysfile contains an unresolved token")
+	}
+	if !filepath.IsAbs(configured) {
+		configured = filepath.Join(home, configured)
+	}
+	configured = filepath.Clean(configured)
+	expectedSnapshot := snapshot
+	expectedSnapshot.SSHAuthorizedKeysFile = ""
+	expected, err := authorizedKeysPath(expectedSnapshot)
+	if err != nil {
+		return "", err
+	}
+	samePath := filepath.Clean(expected) == configured
+	if snapshot.Platform == PlatformWindows {
+		samePath = strings.EqualFold(filepath.Clean(expected), configured)
+	}
+	if !samePath {
+		return "", fmt.Errorf("effective authorizedkeysfile %q is outside the supported target path %q", configured, expected)
+	}
+	return configured, nil
+}
+
+func probeAuthorizedKeys(snapshot Snapshot, profile Profile) (bool, bool, int) {
+	if snapshot.SSHServer.Installed && !snapshot.SSHAuthorizedKeysFileChecked {
+		return false, false, 0
 	}
 	path, err := authorizedKeysPath(snapshot)
 	if err != nil {
-		return false, false
+		return false, false, 0
 	}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return true, false
+		return true, len(profile.SSH.PublicKeys) == 0, 0
 	}
 	if err != nil {
-		return false, false
+		return false, false, 0
 	}
 	existing := map[string]bool{}
-	for len(data) > 0 {
-		key, _, _, rest, parseErr := ssh.ParseAuthorizedKey(data)
-		if parseErr != nil {
-			break
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || bytes.HasPrefix(line, []byte{'#'}) {
+			continue
+		}
+		key, _, _, rest, parseErr := ssh.ParseAuthorizedKey(line)
+		if parseErr != nil || len(bytes.TrimSpace(rest)) != 0 {
+			continue
 		}
 		existing[ssh.FingerprintSHA256(key)] = true
-		data = rest
 	}
 	for _, declared := range profile.SSH.PublicKeys {
 		fingerprint, fingerprintErr := publicKeyFingerprint(declared)
 		if fingerprintErr != nil || !existing[fingerprint] {
-			return true, false
+			return true, false, len(existing)
 		}
 	}
-	return true, true
+	return true, true, len(existing)
 }
 
 func probeFirewall(ctx context.Context, platform Platform, port int) (FirewallState, error) {
@@ -326,7 +513,11 @@ func probeFirewall(ctx context.Context, platform Platform, port int) (FirewallSt
 		if len(strings.TrimSpace(string(out))) > 2 && json.Unmarshal(out, &rules) != nil {
 			return FirewallState{Provider: "windows-firewall"}, errors.New("could not parse Windows firewall rule inventory")
 		}
-		state := FirewallState{Provider: "windows-firewall"}
+		profileScript := `if(@(Get-NetFirewallProfile -ErrorAction Stop | Where-Object {-not $_.Enabled}).Count -gt 0){exit 1}`
+		if _, err := runCommand(ctx, 8*time.Second, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", profileScript); err != nil {
+			return FirewallState{Provider: "windows-firewall"}, errors.New("one or more Windows Firewall profiles are disabled or unreadable")
+		}
+		state := FirewallState{Checked: true, Enabled: true, Provider: "windows-firewall"}
 		for _, rule := range rules {
 			state.Ports = []int{port}
 			state.Scopes = append(state.Scopes, rule.Scope)
@@ -343,14 +534,18 @@ func probeFirewall(ctx context.Context, platform Platform, port int) (FirewallSt
 		}
 		return state, nil
 	case PlatformMacOS:
-		return FirewallState{Provider: "application-firewall"}, nil
+		return FirewallState{Checked: true, Enabled: true, Provider: "application-firewall"}, nil
 	default:
 		if _, err := exec.LookPath("ufw"); err == nil {
 			out, runErr := runCommand(ctx, 8*time.Second, "ufw", "status")
 			if runErr != nil {
 				return FirewallState{Provider: "ufw"}, runErr
 			}
-			state := FirewallState{Provider: "ufw"}
+			state := FirewallState{
+				Checked:  true,
+				Enabled:  strings.Contains(strings.ToLower(string(out)), "status: active"),
+				Provider: "ufw",
+			}
 			linePattern := regexp.MustCompile(`^\s*(\d+)(?:/tcp)?(?:\s+\(v6\))?\s+ALLOW(?:\s+IN)?\s+(.+?)\s*$`)
 			for _, line := range strings.Split(string(out), "\n") {
 				match := linePattern.FindStringSubmatch(line)
@@ -371,7 +566,7 @@ func probeFirewall(ctx context.Context, platform Platform, port int) (FirewallSt
 			if runErr != nil {
 				return FirewallState{Provider: "firewall-cmd"}, runErr
 			}
-			state := FirewallState{Provider: "firewall-cmd"}
+			state := FirewallState{Checked: true, Enabled: true, Provider: "firewall-cmd"}
 			portsOut, _ := runCommand(ctx, 8*time.Second, "firewall-cmd", "--list-ports")
 			for _, declared := range strings.Fields(string(portsOut)) {
 				if declared == strconv.Itoa(port)+"/tcp" {
@@ -399,7 +594,7 @@ func probeFirewall(ctx context.Context, platform Platform, port int) (FirewallSt
 			return state, nil
 		}
 	}
-	return FirewallState{}, nil
+	return FirewallState{}, errors.New("no supported firewall provider was detected")
 }
 
 func broadFirewallScope(scope string) bool {

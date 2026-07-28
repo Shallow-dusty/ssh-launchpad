@@ -13,9 +13,10 @@
 
 ## Apply stopped before changing anything
 
-Exit 4 means elevation is required. Exit 5 means the high-risk confirmation was
-not supplied. Exit 6 means an action could interrupt the active control channel.
-Review the JSON plan rather than bypassing the gate.
+Exit 4 means elevation is required. Exit 5 means confirmation or the reviewed
+`plan.digest` is missing/stale; run Plan again and review it. Exit 6 means an
+action could interrupt the active control channel. Review the JSON plan rather
+than bypassing the gate.
 
 For a self-cut plan, establish a second control path first. Then use a delayed
 action with a controller-visible `host:port` external verification target. Do

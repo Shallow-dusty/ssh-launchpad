@@ -3,9 +3,13 @@ package launchpad
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -13,6 +17,27 @@ import (
 type recordingRunner struct {
 	commands [][]string
 	failAt   int
+}
+
+type artifactRunner struct {
+	source  string
+	content []byte
+	called  bool
+}
+
+func (r *artifactRunner) Run(_ context.Context, command []string, _ io.Writer) error {
+	r.called = true
+	if len(command) == 0 || filepath.Clean(command[0]) == filepath.Clean(r.source) {
+		return errors.New("offline artifact was not executed from verified staging")
+	}
+	data, err := os.ReadFile(command[0])
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(data, r.content) {
+		return errors.New("staged artifact content changed")
+	}
+	return nil
 }
 
 func (r *recordingRunner) Run(_ context.Context, command []string, output io.Writer) error {
@@ -91,6 +116,107 @@ func TestApplyRejectsPlanBlockersAndManualActions(t *testing.T) {
 	report, err = executor.Apply(context.Background(), DefaultProfile(), Plan{Actions: []Action{{ID: "manual", Mutating: false}}}, ApplyOptions{Confirmed: true})
 	if err == nil || report.Success || report.ExitCode != ExitUnsupported {
 		t.Fatalf("manual action was reported as success: %+v %v", report, err)
+	}
+}
+
+func TestJournalSetupAndReadFailuresNeverReturnSuccess(t *testing.T) {
+	executor := Executor{Runner: &recordingRunner{}}
+	journalFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(journalFile, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan := Plan{Platform: PlatformLinux, Actions: []Action{{ID: "x", Mutating: true, Command: []string{"x"}}}}
+	report, err := executor.Apply(context.Background(), DefaultProfile(), plan, ApplyOptions{Confirmed: true, JournalDir: journalFile})
+	if err == nil || report.ExitCode == ExitOK || report.Finished.IsZero() {
+		t.Fatalf("journal setup failure returned success: %+v %v", report, err)
+	}
+
+	report, err = executor.Rollback(context.Background(), filepath.Join(t.TempDir(), "missing.json"))
+	if err == nil || report.ExitCode == ExitOK || report.Finished.IsZero() {
+		t.Fatalf("missing rollback journal returned success: %+v %v", report, err)
+	}
+}
+
+func TestRollbackRejectsTamperedJournal(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "journal.json")
+	journal := Journal{SchemaVersion: SchemaVersion, ID: "tamper-test", Status: "completed"}
+	if err := writeJournalAtomic(path, &journal); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = bytes.Replace(data, []byte(`"status": "completed"`), []byte(`"status": "running"`), 1)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report, err := (Executor{}).Rollback(context.Background(), path)
+	if err == nil || report.ExitCode == ExitOK {
+		t.Fatalf("tampered journal was accepted: %+v %v", report, err)
+	}
+}
+
+func TestRollbackIsIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "journal.json")
+	journal := Journal{
+		SchemaVersion: SchemaVersion,
+		ID:            "rollback-test",
+		ProfileName:   "test",
+		Status:        "completed",
+		Actions: []Action{{
+			ID:              "configure-sshd",
+			Operation:       "configure_sshd",
+			Reversible:      true,
+			RollbackCommand: []string{"undo"},
+		}},
+		Results: []ActionResult{{ActionID: "configure-sshd", Status: "completed"}},
+	}
+	if err := writeJournalAtomic(path, &journal); err != nil {
+		t.Fatal(err)
+	}
+	runner := &recordingRunner{}
+	executor := Executor{Runner: runner}
+	for attempt := 0; attempt < 2; attempt++ {
+		report, err := executor.Rollback(context.Background(), path)
+		if err != nil || !report.Success {
+			t.Fatalf("rollback attempt %d failed: %+v %v", attempt+1, report, err)
+		}
+	}
+	if len(runner.commands) != 1 {
+		t.Fatalf("rollback command ran %d times, want once", len(runner.commands))
+	}
+}
+
+func TestOfflineArtifactIsHashedAndStagedBeforeExecution(t *testing.T) {
+	content := []byte("verified offline installer")
+	source := filepath.Join(t.TempDir(), "installer.exe")
+	if err := os.WriteFile(source, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(content)
+	action := Action{
+		ID:        "install-tailscale",
+		Operation: "install_tailscale",
+		Mutating:  true,
+		Command:   []string{source, "/quiet"},
+		Params: map[string]string{
+			"artifactPath":   source,
+			"artifactSHA256": hex.EncodeToString(digest[:]),
+		},
+	}
+	runner := &artifactRunner{source: source, content: content}
+	executor := Executor{Runner: runner}
+	report, err := executor.Apply(context.Background(), DefaultProfile(), Plan{Platform: PlatformLinux, Actions: []Action{action}}, ApplyOptions{Confirmed: true, JournalDir: t.TempDir()})
+	if err != nil || !report.Success || !runner.called {
+		t.Fatalf("verified offline artifact was not executed safely: %+v %v", report, err)
+	}
+
+	action.Params["artifactSHA256"] = strings.Repeat("0", 64)
+	runner.called = false
+	report, err = executor.Apply(context.Background(), DefaultProfile(), Plan{Platform: PlatformLinux, Actions: []Action{action}}, ApplyOptions{Confirmed: true, JournalDir: t.TempDir()})
+	if err == nil || report.ExitCode != ExitDownloadFailure || runner.called {
+		t.Fatalf("bad offline artifact was not rejected before execution: %+v %v", report, err)
 	}
 }
 

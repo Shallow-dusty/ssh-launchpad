@@ -61,6 +61,18 @@ func TestElevatedHelperRejectsTampering(t *testing.T) {
 	}
 }
 
+func TestMissingRollbackJournalReturnsNonzeroExitCode(t *testing.T) {
+	code := run([]string{
+		"--non-interactive",
+		"rollback",
+		"--journal", filepath.Join(t.TempDir(), "missing.json"),
+		"--output", filepath.Join(t.TempDir(), "rollback.json"),
+	})
+	if code != launchpad.ExitInvalidProfile {
+		t.Fatalf("missing rollback journal exit code = %d, want %d", code, launchpad.ExitInvalidProfile)
+	}
+}
+
 func TestUnknownLanguageIsRejected(t *testing.T) {
 	if _, _, err := parseGlobalOptions([]string{"--lang", "fr", "check"}); err == nil {
 		t.Fatal("expected unsupported language error")

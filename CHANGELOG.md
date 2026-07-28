@@ -2,7 +2,7 @@
 
 All notable changes are documented here.
 
-## [0.2.3] - 2026-07-25
+## [0.2.3] - Unreleased
 
 ### Security and reliability
 
@@ -16,19 +16,25 @@ All notable changes are documented here.
   rollback commands.
 - Make Windows SSH configuration win before existing directives and `Match`
   blocks, with validation and immediate backup restoration on failure.
-- Treat blockers, manual-only actions, and journal persistence failures as
-  incomplete work instead of successful Apply or Verify results.
+- Treat blockers, manual-only actions, journal read/setup/persistence failures,
+  invalid SSH authentication evidence, disabled/unknown firewalls, and extra
+  firewall scopes as incomplete work instead of successful Apply or Verify.
 - Harden CLI UAC argument quoting and cancellation classification, scheduled
   task UTF-16 encoding, report redaction, archive extraction, release-version
   paths, offline-pack symlinks, and installer directory deletion boundaries.
-- Share one versioned, digest-checked elevation protocol between the desktop
-  and CLI, pre-create privileged output files as the standard user, reject
-  redirected response paths and reparse points, and preserve file ownership.
+- Bind desktop and CLI confirmation to a canonical plan digest, then carry it
+  through the shared versioned elevation protocol; changed plans are rejected.
+  Pre-create privileged output files as the standard user, reject redirected
+  response paths and reparse points, and preserve file ownership.
 - Replace age-only CLI locking with live process ownership and token-checked
   cleanup; validate generated PowerShell and POSIX commands with native parsers
   and ShellCheck.
-- Require HTTPS for all initial and redirected downloads, with no runtime
-  plaintext override, and select tag-matched release notes at publish time.
+- Require HTTPS for all initial and redirected downloads, hash-pin offline
+  executables and execute only verified staged bytes, with no runtime plaintext
+  override, and select tag-matched release notes at publish time.
+- Make rollback reports truthfully nonzero on invalid journals, persist rollback
+  progress for idempotency, and limit Windows uninstall to owned files in the
+  fixed application directory.
 - Build with Go 1.25.12, which contains the standard-library security fixes
   identified by the repository vulnerability scan.
 

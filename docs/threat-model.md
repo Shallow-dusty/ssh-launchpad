@@ -13,14 +13,17 @@
 
 | Threat | Control |
 | --- | --- |
-| Malicious or replaced download | HTTPS, release manifest, mandatory SHA-256, explicit mirror/proxy |
+| Malicious or replaced download | HTTPS, release manifest, mandatory SHA-256, explicit mirror/proxy; offline executables are hash-pinned and copied to privileged staging before execution |
 | Secret committed to a profile | validation rejects private-key material; release scan and package smoke |
 | Accidental public exposure | tailnet-only default; explicit LAN/custom CIDRs; port and scope plan |
 | Lockout from restarting the only path | active transport detection, self-cut block, delayed action, external verify |
-| Partial Apply leaves a broken host | pre-change validation, journal, reversible actions, optional auto-rollback |
+| Partial Apply leaves a broken host | pre-change validation, integrity-digested journal, idempotent rollback, reversible actions, optional auto-rollback |
+| Confirmed plan changes before Apply | canonical plan digest; changed profile, evidence, or commands require review and confirmation again |
 | UI bypasses safety policy | UI and CLI call the same engine; executor owns confirmation gates |
 | Read-only command escalates | Check/Plan/Verify never invoke elevation |
 | WSL result misrepresents Windows | separate platform identity and adapters |
+| Firewall uncertainty is mistaken for safety | unknown/disabled providers and extra source scopes are Plan blockers |
+| Uninstall removes unrelated files | fixed install directory; uninstaller deletes only owned files and removes the directory only when empty |
 | Log leaks device details | local reports use restrictive permissions; artifacts are excluded from releases |
 
 Support-report redaction is heuristic, not a cryptographic guarantee. Review a

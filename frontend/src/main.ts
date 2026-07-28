@@ -20,7 +20,7 @@ const defaultProfile: Profile = {
   ssh: { enabled: true, port: 22, publicKeys: [], passwordAuthentication: false },
   transport: { mode: "tailnet", install: false },
   exposure: { mode: "tailnet", customCidrs: [] },
-  download: { strategy: "official", mirrorBaseUrl: "", proxyUrl: "", offlineBundle: "", cacheDir: "", retries: 3 },
+  download: { strategy: "official", mirrorBaseUrl: "", proxyUrl: "", offlineBundle: "", offlineSha256: "", cacheDir: "", retries: 3 },
   safety: { confirmHighRisk: true, preventSelfCut: true, scheduledDelaySeconds: 20, autoRollback: true },
   advanced: { windowsSshService: "sshd", linuxSshService: "auto", macosSshLabel: "com.openssh.sshd", stateDir: "" },
   labels: { experience: "guided" }
@@ -348,7 +348,15 @@ async function beginSafeInstall(): Promise<void> {
   state.installError = "";
   state.progress = [];
   renderPage();
-  const request: DesktopRequest = { stage: "apply", profile: state.profile, confirmed: true, allowSelfCut: false, scheduleRisky: false, externalVerify: "" };
+  const request: DesktopRequest = {
+    stage: "apply",
+    profile: state.profile,
+    planDigest: state.planReport?.plan?.digest ?? "",
+    confirmed: true,
+    allowSelfCut: false,
+    scheduleRisky: false,
+    externalVerify: ""
+  };
   try {
     if (window.go?.main?.App) {
       state.activeJob = await window.go.main.App.BeginElevatedApply(request);
@@ -422,7 +430,7 @@ async function runVerify(): Promise<void> {
 }
 
 async function runStage(stage: Stage): Promise<Report> {
-  const request: DesktopRequest = { stage, profile: state.profile, confirmed: false, allowSelfCut: false, scheduleRisky: false, externalVerify: "" };
+  const request: DesktopRequest = { stage, profile: state.profile, planDigest: "", confirmed: false, allowSelfCut: false, scheduleRisky: false, externalVerify: "" };
   return window.go?.main?.App ? window.go.main.App.Run(request) : mockRun(request);
 }
 

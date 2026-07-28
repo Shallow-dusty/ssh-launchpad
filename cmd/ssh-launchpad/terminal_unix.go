@@ -25,6 +25,9 @@ func elevateAndApply(profile launchpad.Profile, options launchpad.ApplyOptions, 
 }
 
 func invokeElevated(executable, requestPath, digest string) error {
+	// #nosec G702 -- executable comes from os.Executable, requestPath is a
+	// freshly created protocol file, and every value is passed as a separate
+	// argv element rather than through a shell.
 	cmd := exec.Command("sudo", executable, "__elevated-apply", "--request", requestPath, "--sha256", digest)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()

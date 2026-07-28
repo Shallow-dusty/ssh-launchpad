@@ -10,12 +10,14 @@ func generatedSyntaxTestActions(t *testing.T, platform Platform) []Action {
 	profile.SSH.Port = 2222
 	profile.SSH.PublicKeys = []string{syntaxTestPublicKey}
 	snapshot := Snapshot{
-		Platform:              platform,
-		PackageManager:        "apt-get",
-		SSHService:            ServiceState{Name: "sshd"},
-		AuthorizedKeysChecked: true,
-		Tailscale:             TransportState{Installed: true, Online: true},
-		Firewall:              FirewallState{Provider: "ufw"},
+		Platform:                 platform,
+		PackageManager:           "apt-get",
+		SSHService:               ServiceState{Name: "sshd"},
+		SSHAuthenticationChecked: true,
+		SSHPubkeyAuthentication:  true,
+		AuthorizedKeysChecked:    true,
+		Tailscale:                TransportState{Installed: true, Online: true},
+		Firewall:                 FirewallState{Checked: true, Enabled: true, Provider: "ufw"},
 	}
 	if platform == PlatformWindows {
 		snapshot.PackageManager = "winget"
@@ -32,6 +34,16 @@ func generatedSyntaxTestActions(t *testing.T, platform Platform) []Action {
 		t.Fatal("expected generated actions")
 	}
 	return plan.Actions
+}
+
+func TestParseEffectiveSSHAuthenticationPolicy(t *testing.T) {
+	config := parseEffectiveSSHConfig([]byte("passwordauthentication no\nkbdinteractiveauthentication no\npubkeyauthentication yes\nauthorizedkeysfile .ssh/authorized_keys .ssh/authorized_keys2\n"))
+	if !config.Checked || config.PasswordAuthentication || config.KbdInteractiveAuthentication || !config.PubkeyAuthentication || config.AuthorizedKeysFile != ".ssh/authorized_keys .ssh/authorized_keys2" {
+		t.Fatalf("effective authentication policy parsed incorrectly: %+v", config)
+	}
+	if parseEffectiveSSHConfig([]byte("pubkeyauthentication yes\n")).Checked {
+		t.Fatal("partial authentication evidence must remain unknown")
+	}
 }
 
 func TestParseConfiguredSSHPortUsesEffectiveConfiguration(t *testing.T) {

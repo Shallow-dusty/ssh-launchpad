@@ -120,6 +120,10 @@ func validateRequest(request Request) error {
 	if !request.Options.Confirmed {
 		return errors.New("elevated helper accepts only explicitly confirmed Apply requests")
 	}
+	planDigest := strings.TrimSpace(request.Options.ExpectedPlanDigest)
+	if decoded, err := hex.DecodeString(planDigest); err != nil || len(decoded) != sha256.Size {
+		return errors.New("elevated helper requires the digest of the explicitly reviewed plan")
+	}
 	if strings.TrimSpace(request.ResponsePath) == "" {
 		return errors.New("elevation response path is required")
 	}
