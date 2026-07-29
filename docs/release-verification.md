@@ -56,3 +56,11 @@ Then:
 
 Publishing a tag is not sufficient: the release is complete only when assets,
 checksums, and SBOM are downloadable and the release workflow is green.
+
+The `v0.2.3` publication predates the archive-layout regression fixes and is a
+documented exception: its original workflow built the runtime artifacts but
+failed an obsolete final smoke assertion. The immutable-tag recovery,
+corrective CI, artifact provenance, re-download verification, and remaining
+red workflow are recorded in
+[`v0.2.3-security-audit.md`](v0.2.3-security-audit.md). This exception does not
+weaken the green-workflow requirement for later releases.
