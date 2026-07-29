@@ -93,9 +93,21 @@ not notarized.
 
 - Published Release:
   <https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.3>
+- The immutable `v0.2.3` tag resolves to
+  `42248be58e693da5f58c26b7a2fc7eada71a5677`.
 - All nine locally staged assets passed the SHA-256 manifest; all six portable
   bundle manifests passed 74 inner-file checks, including UTF-8 Chinese
   filenames. The SPDX JSON SBOM and archive content checks also passed.
+- The original tag workflow built the eight runtime artifacts successfully but
+  its publish job stopped on two smoke-check assumptions about CI archives
+  having a top-level directory. Those validators were fixed in
+  [PR #1](https://github.com/Shallow-dusty/ssh-launchpad/pull/1) and
+  [PR #2](https://github.com/Shallow-dusty/ssh-launchpad/pull/2), with green
+  Windows, Linux, macOS, UI, vulnerability, and secret-scan CI.
+- Publication reused the eight artifacts downloaded from the original Actions
+  run, added the verified SPDX SBOM and regenerated `checksums.txt`, then
+  re-downloaded all ten Draft Release files. Every uploaded SHA-256 matched the
+  reviewed staging set before the Release was promoted to Latest.
 - The extracted Windows x64 portable CLI reported `0.2.3`, schema `1`, and
   UTF-8 no-BOM JSON during a read-only Check.
 - The checksum-verified v0.2.0 installer upgraded in place to the unsigned
