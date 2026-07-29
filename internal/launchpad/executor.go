@@ -197,7 +197,7 @@ func materializeActionCommand(action Action, profile Profile, platform Platform)
 	}
 	key := strings.TrimSpace(profile.Transport.AuthKey)
 	if key == "" {
-		return nil, errors.New("Tailscale authentication was planned without an auth key")
+		return nil, errors.New("tailscale authentication was planned without an auth key")
 	}
 	switch platform {
 	case PlatformWindows:
@@ -210,7 +210,7 @@ func materializeActionCommand(action Action, profile Profile, platform Platform)
 	case PlatformLinux, PlatformWSL, PlatformMacOS:
 		return []string{"tailscale", "up", "--auth-key=" + key}, nil
 	default:
-		return nil, fmt.Errorf("Tailscale authentication is unsupported on platform %q", platform)
+		return nil, fmt.Errorf("tailscale authentication is unsupported on platform %q", platform)
 	}
 }
 
