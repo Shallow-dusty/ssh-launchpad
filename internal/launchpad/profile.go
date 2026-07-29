@@ -150,6 +150,16 @@ func (p Profile) Validate() error {
 	default:
 		errs = append(errs, fmt.Errorf("unsupported transport.mode %q", p.Transport.Mode))
 	}
+	if authKey := strings.TrimSpace(p.Transport.AuthKey); authKey != "" {
+		if p.Transport.Mode != "tailnet" {
+			errs = append(errs, errors.New("transport.authKey requires transport.mode tailnet"))
+		}
+		if len(authKey) > 4096 || strings.ContainsAny(authKey, "\r\n\x00") {
+			errs = append(errs, errors.New("transport.authKey must be a single value no longer than 4096 bytes"))
+		} else if !strings.HasPrefix(authKey, "tskey-auth-") {
+			errs = append(errs, errors.New("transport.authKey must be a Tailscale auth key beginning with tskey-auth-"))
+		}
+	}
 	switch p.Exposure.Mode {
 	case "tailnet", "lan", "custom", "none":
 	default:

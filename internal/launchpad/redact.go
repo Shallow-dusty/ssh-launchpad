@@ -11,8 +11,9 @@ var (
 	ipv6Pattern        = regexp.MustCompile(`(?i)(?:\b[0-9a-f]{1,4}:){2,}[0-9a-f:]*\b`)
 	windowsUserPattern = regexp.MustCompile(`(?i)\b[A-Z]:\\Users\\[^\\\s"]+`)
 	unixHomePattern    = regexp.MustCompile(`/(?:Users|home)/[^/\s"]+`)
-	tokenPattern       = regexp.MustCompile(`(?i)\b(token|cookie|authkey|authorization|password|passwd|secret|credential)\s*[:=]\s*[^\s,;"]+`)
-	keyCommentPattern  = regexp.MustCompile(`(?m)((?:ssh-[^\s]+|ecdsa-[^\s]+|sk-[^\s]+)\s+[A-Za-z0-9+/=]+)(?:\s+[^\r\n]+)`)
+	tokenPattern        = regexp.MustCompile(`(?i)\b(token|cookie|authkey|authorization|password|passwd|secret|credential)\s*[:=]\s*[^\s,;"]+`)
+	tailscaleKeyPattern = regexp.MustCompile(`(?i)\btskey-auth-[A-Za-z0-9_-]+`)
+	keyCommentPattern   = regexp.MustCompile(`(?m)((?:ssh-[^\s]+|ecdsa-[^\s]+|sk-[^\s]+)\s+[A-Za-z0-9+/=]+)(?:\s+[^\r\n]+)`)
 )
 
 // RedactReport creates a shareable report without changing the machine-readable schema.
@@ -69,17 +70,24 @@ func redactValue(value any) any {
 		}
 		return typed
 	case string:
-		text := ipv4Pattern.ReplaceAllString(typed, "<redacted-ip>")
-		text = ipv6Pattern.ReplaceAllString(text, "<redacted-ip>")
-		text = windowsUserPattern.ReplaceAllString(text, `C:\Users\<redacted-user>`)
-		text = unixHomePattern.ReplaceAllString(text, "/home/<redacted-user>")
-		text = tokenPattern.ReplaceAllString(text, "$1=<redacted>")
-		text = keyCommentPattern.ReplaceAllString(text, "$1 <redacted-comment>")
-		if strings.Contains(text, "PRIVATE KEY") {
-			return "<redacted-private-key-material>"
-		}
-		return text
+		return redactText(typed)
 	default:
 		return value
 	}
+}
+
+// redactText strips credential material, device identity, and public-key
+// comments from free-form text such as captured command output.
+func redactText(text string) string {
+	text = ipv4Pattern.ReplaceAllString(text, "<redacted-ip>")
+	text = ipv6Pattern.ReplaceAllString(text, "<redacted-ip>")
+	text = windowsUserPattern.ReplaceAllString(text, `C:\Users\<redacted-user>`)
+	text = unixHomePattern.ReplaceAllString(text, "/home/<redacted-user>")
+	text = tokenPattern.ReplaceAllString(text, "$1=<redacted>")
+	text = tailscaleKeyPattern.ReplaceAllString(text, "<redacted-tailscale-auth-key>")
+	text = keyCommentPattern.ReplaceAllString(text, "$1 <redacted-comment>")
+	if strings.Contains(text, "PRIVATE KEY") {
+		return "<redacted-private-key-material>"
+	}
+	return text
 }

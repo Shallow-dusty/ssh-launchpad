@@ -66,6 +66,10 @@ type SSHProfile struct {
 type TransportProfile struct {
 	Mode    string `json:"mode" yaml:"mode"`
 	Install bool   `json:"install" yaml:"install"`
+	// AuthKey optionally joins the tailnet unattended during Apply. It is a
+	// secret: it never appears in plans, journals, reports, or exported
+	// profiles. See docs/threat-model.md.
+	AuthKey string `json:"authKey,omitempty" yaml:"authKey,omitempty"`
 }
 
 type ExposureProfile struct {

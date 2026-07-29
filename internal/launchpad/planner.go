@@ -13,6 +13,12 @@ import (
 
 type Planner struct{}
 
+// tailscaleAuthCommandMarker stands in for the real tailscale-up argv in the
+// reviewable plan. The auth key is materialized into the command only at Apply
+// time so the secret never appears in the inspectable plan or the journal;
+// the plan digest still binds it because the digest covers the whole profile.
+const tailscaleAuthCommandMarker = "__ssh_launchpad_tailscale_auth__"
+
 func (Planner) Build(profile Profile, snapshot Snapshot) (plan Plan) {
 	plan = Plan{
 		Timestamp:   time.Now().UTC(),
@@ -51,19 +57,31 @@ func (Planner) Build(profile Profile, snapshot Snapshot) (plan Plan) {
 		return plan
 	}
 	if profile.Transport.Mode == "tailnet" && !snapshot.Tailscale.Online {
+		transportReadyAfterApply := false
 		if !snapshot.Tailscale.Installed && profile.Transport.Install {
 			action := installTailscaleAction(profile, snapshot)
 			if len(action.Command) == 0 {
 				plan.Blockers = append(plan.Blockers, action.Reason)
 			} else {
 				plan.Actions = append(plan.Actions, action)
-				plan.Warnings = append(plan.Warnings, "This is a phased setup. After Tailscale is installed, sign in and run Check again; SSH and firewall changes are intentionally deferred.")
 			}
-		} else {
+		}
+		switch {
+		case len(plan.Blockers) > 0:
+			// The blocker above already explains why no transport action was planned.
+		case strings.TrimSpace(profile.Transport.AuthKey) != "" && (snapshot.Tailscale.Installed || profile.Transport.Install):
+			plan.Actions = append(plan.Actions, authenticateTailscaleAction(snapshot))
+			plan.Warnings = append(plan.Warnings, "The profile carries a Tailscale auth key. It is used only during Apply and never appears in the plan, journal, or reports.")
+			transportReadyAfterApply = true
+		case !snapshot.Tailscale.Installed && profile.Transport.Install:
+			plan.Warnings = append(plan.Warnings, "This is a phased setup. After Tailscale is installed, sign in and run Check again; SSH and firewall changes are intentionally deferred.")
+		default:
 			plan.Blockers = append(plan.Blockers, "Tailnet exposure is selected, but Tailscale is not online. Install/sign in to Tailscale, then run Check again.")
 		}
-		plan.NoChanges = len(plan.Actions) == 0 && len(plan.Blockers) == 0
-		return plan
+		if !transportReadyAfterApply {
+			plan.NoChanges = len(plan.Actions) == 0 && len(plan.Blockers) == 0
+			return plan
+		}
 	}
 	if !snapshot.SSHClient.Installed || !snapshot.SSHServer.Installed {
 		plan.Actions = append(plan.Actions, installSSHAction(profile, snapshot))
@@ -137,6 +155,19 @@ func installSSHAction(profile Profile, snapshot Snapshot) Action {
 	default:
 		a.Command = nil
 	}
+	return a
+}
+
+// authenticateTailscaleAction joins the tailnet with the profile's auth key.
+// The step is deliberately irreversible: leaving a tailnet is an account-level
+// decision, and rollback of a partially applied plan still covers every SSH
+// and firewall change that follows. Joining a tailnet on its own does not
+// expose SSH.
+func authenticateTailscaleAction(snapshot Snapshot) Action {
+	a := baseAction("authenticate-tailscale", "authenticate_tailscale", "transport", RiskMedium, "Join the configured Tailscale network with the profile auth key", "The profile supplies a Tailscale auth key and this device is not online.")
+	a.RequiresElevation = snapshot.Platform != PlatformMacOS
+	a.Reversible = false
+	a.Command = []string{tailscaleAuthCommandMarker}
 	return a
 }
 

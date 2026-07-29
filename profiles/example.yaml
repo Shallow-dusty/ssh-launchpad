@@ -14,6 +14,9 @@ ssh:
 transport:
   mode: tailnet
   install: false
+  # Optional tskey-auth- key for unattended tailnet join during Apply.
+  # Keep it secret: it is stripped from exported profiles and reports.
+  authKey: ""
 
 exposure:
   mode: tailnet

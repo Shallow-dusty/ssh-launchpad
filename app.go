@@ -332,11 +332,19 @@ func (a *App) ExportProfile(profile launchpad.Profile) (string, error) {
 	if err != nil || path == "" {
 		return "", err
 	}
-	data, err := yaml.Marshal(profile)
+	data, err := marshalExportProfile(profile)
 	if err != nil {
 		return "", err
 	}
 	return path, os.WriteFile(path, data, 0o600)
+}
+
+// marshalExportProfile strips secrets before a profile leaves the app: a
+// YAML export is meant to be shareable, so the Tailscale auth key never
+// travels with it.
+func marshalExportProfile(profile launchpad.Profile) ([]byte, error) {
+	profile.Transport.AuthKey = ""
+	return yaml.Marshal(profile)
 }
 
 func (a *App) DiscoverPublicKeys() ([]PublicKeyInfo, error) {

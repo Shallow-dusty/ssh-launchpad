@@ -25,6 +25,13 @@ verification, journals, events, and reports. `cmd/ssh-launchpad` and `app.go`
 only translate user input into engine calls. The UI does not assemble shell
 commands or decide safety policy.
 
+Secrets follow the same immutability rule. When a profile carries a
+`transport.authKey`, the planner emits a marker command instead of the real
+argv, so the reviewable plan and the journal never contain the key; the
+executor materializes the marker into the real `tailscale up` command only
+inside Apply. The plan digest still binds the key because the digest covers
+the whole profile.
+
 `internal/elevation` owns the single versioned GUI/CLI privilege boundary.
 The standard-user process writes and hashes an immutable request and
 pre-creates fixed response/event files. The elevated helper verifies the

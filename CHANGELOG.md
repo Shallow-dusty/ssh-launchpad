@@ -2,6 +2,19 @@
 
 All notable changes are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Support `transport.authKey` in profiles for unattended Tailnet bootstrap:
+  when a valid `tskey-auth-` key is present and Tailscale is not online, a
+  single Apply installs (if requested), joins the tailnet, and continues with
+  SSH and firewall changes. Without a key the phased setup is unchanged.
+- The auth key never appears in the reviewable plan, journal, exported YAML
+  profiles, or support reports; captured action output is redacted. The
+  trade-offs (argv visibility during `tailscale up`, irreversible tailnet
+  join) are documented in `docs/threat-model.md`.
+
 ## [0.2.3] - 2026-07-29
 
 ### Security and reliability
