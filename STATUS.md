@@ -4,6 +4,20 @@ Last locally verified: 2026-07-29
 
 Current release: [`v0.2.3`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.3)
 
+## Unreleased toward v0.2.4
+
+- Personal cards (`.sshlaunchpad-card`) carry controller public keys, SSH
+  port, display labels, network mode, and an optional Tailscale auth key from
+  the controller to a new device, prefilling the wizard and starting from the
+  read-only Check. Unknown card fields are ignored for forward compatibility.
+- `transport.authKey` enables one-pass unattended Tailnet bootstrap; the key
+  is materialized only inside Apply and redacted from plans, journals,
+  reports, and exported profiles (see `docs/threat-model.md`).
+- Validation so far: Go unit/race/vet, Windows/macOS cross-compilation,
+  frontend typecheck/build, and 13 browser scenarios. The native Windows
+  gates (Pester, Wails/NSIS, upgrade smoke, disposable-VM matrix) remain open
+  before any v0.2.4 tag.
+
 ## v0.2.3 audit hardening
 
 - Tailnet setup is phased: install transport first, require online sign-in, then
