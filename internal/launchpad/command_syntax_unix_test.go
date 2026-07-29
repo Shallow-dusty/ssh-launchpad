@@ -5,6 +5,7 @@ package launchpad
 import (
 	"bytes"
 	"os/exec"
+	"path/filepath"
 	"testing"
 )
 
@@ -12,7 +13,7 @@ func TestGeneratedUnixCommandSyntaxAndShellCheck(t *testing.T) {
 	for _, platform := range []Platform{PlatformLinux, PlatformMacOS} {
 		for _, action := range generatedSyntaxTestActions(t, platform) {
 			for _, command := range [][]string{action.Command, action.RollbackCommand} {
-				if len(command) < 3 || command[0] != "sh" || command[1] != "-c" {
+				if len(command) < 3 || filepath.Base(command[0]) != "sh" || command[1] != "-c" {
 					continue
 				}
 				script := command[2]

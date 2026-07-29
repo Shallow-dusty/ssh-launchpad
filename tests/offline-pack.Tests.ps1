@@ -30,7 +30,7 @@ Describe 'Offline dependency pack' {
             Add-Type -AssemblyName System.IO.Compression.FileSystem
             $archive = [IO.Compression.ZipFile]::OpenRead($output)
             try {
-                $names = $archive.Entries | ForEach-Object FullName
+                $names = $archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') }
                 $names | Should -Contain 'manifest.json'
                 $names | Should -Contain 'bundle-checksums.txt'
                 $names | Should -Contain 'payload/openssh.test'

@@ -1,3 +1,5 @@
+import { APP_VERSION } from "./version";
+
 export type Language = "zh-CN" | "en";
 
 export const messages = {
@@ -138,7 +140,7 @@ export const messages = {
     rawReport: "原始报告",
     actionCount: "{count} 个项目",
     close: "关闭",
-    version: "v0.2.3",
+    version: `v${APP_VERSION}`,
     errorGeneric: "操作没有完成。电脑没有被继续修改。",
     noTelemetry: "默认不收集遥测或使用数据。"
   },
@@ -279,7 +281,7 @@ export const messages = {
     rawReport: "Raw report",
     actionCount: "{count} items",
     close: "Close",
-    version: "v0.2.3",
+    version: `v${APP_VERSION}`,
     errorGeneric: "The operation did not finish. No further changes were made.",
     noTelemetry: "No telemetry or usage data is collected by default."
   }

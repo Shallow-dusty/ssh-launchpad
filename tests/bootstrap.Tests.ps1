@@ -23,6 +23,16 @@ Describe 'PowerShell bootstrap safety' {
         if ($content -notmatch 'Get-FileHash -Algorithm SHA256') { throw 'SHA-256 verification missing' }
     }
 
+    It 'rejects redirects that leave HTTPS' {
+        if ($content -notmatch 'AllowAutoRedirect\s*=\s*\$false') { throw 'Automatic redirect blocking missing' }
+        if ($content -notmatch "\`$current\.Scheme\s+-ne\s+'https'") { throw 'Redirect HTTPS gate missing' }
+
+        $shellPath = Join-Path $PSScriptRoot '..\scripts\bootstrap.sh'
+        $shellContent = Get-Content -LiteralPath $shellPath -Raw
+        if ($shellContent -notmatch "--proto\s+'=https'") { throw 'curl initial HTTPS protocol gate missing' }
+        if ($shellContent -notmatch "--proto-redir\s+'=https'") { throw 'curl redirect HTTPS protocol gate missing' }
+    }
+
     It 'does not disable TLS validation or execute downloaded script text' {
         if ($content -match 'CertificatePolicy') { throw 'Certificate policy override found' }
         if ($content -match 'SkipCertificateCheck') { throw 'TLS bypass found' }

@@ -10,6 +10,8 @@
 /frontend/test-results/
 /frontend/playwright-report/
 /build/bin/
+/build/test-tmp/
+/build/tools/
 /build/windows/
 *.log
 *.journal.json

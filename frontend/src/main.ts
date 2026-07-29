@@ -12,6 +12,7 @@ import {
   type InstallState, type WizardMode
 } from "./views";
 import type { DesktopRequest, ElevatedJob, Profile, PublicKeyInfo, Report, Stage } from "./types";
+import { APP_VERSION } from "./version";
 
 const defaultProfile: Profile = {
   schemaVersion: 1,
@@ -557,7 +558,7 @@ async function checkForUpdate(): Promise<void> {
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const value = await response.json() as { tag_name: string; html_url: string };
           const latest = value.tag_name.replace(/^v/, "");
-          return { currentVersion: "0.2.3", latestVersion: latest, available: isNewerVersion(latest, "0.2.3"), url: value.html_url, channel: "stable" };
+          return { currentVersion: APP_VERSION, latestVersion: latest, available: isNewerVersion(latest, APP_VERSION), url: value.html_url, channel: "stable" };
         });
     if (info.available) {
       const message = state.language === "zh-CN"

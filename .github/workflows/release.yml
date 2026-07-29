@@ -6,25 +6,32 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
   actions: read
 
 jobs:
   quality:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - run: go test ./...
+      - run: go test -race ./...
       - run: go vet ./...
-      - run: shellcheck scripts/bootstrap.sh scripts/new-offline-pack.sh
+      - run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+      - run: go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 -exclude-generated -severity high ./...
+      - run: shellcheck scripts/bootstrap.sh scripts/new-offline-pack.sh "packaging/launchers/Start SSH Launchpad.command"
       - name: Secret scan
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -57,8 +64,10 @@ jobs:
       GOARCH: ${{ matrix.goarch }}
       CGO_ENABLED: '0'
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
@@ -85,14 +94,19 @@ jobs:
             cp packaging/launchers/ssh-launchpad.desktop "stage/${name}/"
             chmod +x "stage/${name}/ssh-launchpad"
           fi
-          (cd "stage/${name}" && find . -type f ! -name bundle-checksums.txt -print0 | sort -z | xargs -0 sha256sum | sed 's|  \./|  |' > bundle-checksums.txt)
+          manifest="$(mktemp)"
+          (
+            cd "stage/${name}"
+            find . -type f -print0 | sort -z | xargs -0 sha256sum | sed 's|  \./|  |'
+          ) > "$manifest"
+          mv "$manifest" "stage/${name}/bundle-checksums.txt"
           if [[ "$GOOS" == windows ]]; then
             cd stage
             zip -qr "../${name}.zip" "${name}"
           else
             tar -C stage -czf "${name}.tar.gz" "${name}"
           fi
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: cli-${{ matrix.goos }}-${{ matrix.goarch }}
           path: SSH-Launchpad_*.*
@@ -102,7 +116,9 @@ jobs:
     needs: quality
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
       - name: Package standalone bootstraps
         shell: bash
         run: |
@@ -113,7 +129,7 @@ jobs:
           cp docs/offline-help.zh-CN.md docs/offline-help.en.md docs/offline-pack.md "${name}/"
           cp profiles/*.yaml "${name}/profiles/"
           zip -qr "${name}.zip" "${name}"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: bootstrap
           path: ssh-launchpad_*_bootstrap.zip
@@ -122,15 +138,17 @@ jobs:
     needs: quality
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
           cache: pnpm
@@ -148,6 +166,9 @@ jobs:
       - name: Install frontend
         working-directory: frontend
         run: pnpm install --frozen-lockfile
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        run: pnpm audit --audit-level high
       - name: Install test dependencies
         shell: pwsh
         run: |
@@ -159,16 +180,58 @@ jobs:
           Invoke-Pester -Path tests -CI
           pnpm --dir frontend run build
           pnpm --dir frontend run test:e2e
-      - name: Build user-scope installer
-        run: wails build -clean -nsis -webview2 embed -installscope user -platform windows/amd64
-      - name: Name installer
+      - name: Build validated user-scope installer
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          ./scripts/build-windows-installer.ps1 -Version $version
           $installer = Get-ChildItem build/bin -Filter '*installer.exe' | Select-Object -First 1
           if (-not $installer) { throw 'NSIS installer missing' }
           Copy-Item $installer.FullName "SSH-Launchpad_${version}_Windows_x64_Installer_UNSIGNED.exe"
-      - uses: actions/upload-artifact@v6
+      - name: Download and verify previous stable installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releases = gh release list --repo $env:GITHUB_REPOSITORY --limit 100 --json tagName,isDraft,isPrerelease |
+              ConvertFrom-Json
+          $baseRelease = $releases |
+              Where-Object { -not $_.isDraft -and -not $_.isPrerelease -and $_.tagName -ne $env:GITHUB_REF_NAME } |
+              Select-Object -First 1
+          if (-not $baseRelease) { throw 'A previous stable installer is required for the upgrade smoke.' }
+          $baseVersion = $baseRelease.tagName.TrimStart('v')
+          $upgradeVersion = $env:GITHUB_REF_NAME.TrimStart('v')
+          $baseAsset = "SSH-Launchpad_${baseVersion}_Windows_x64_Installer_UNSIGNED.exe"
+          New-Item -ItemType Directory -Path upgrade-base | Out-Null
+          gh release download $baseRelease.tagName --repo $env:GITHUB_REPOSITORY --pattern $baseAsset --dir upgrade-base
+          if ($LASTEXITCODE -ne 0) { throw "Could not download $baseAsset." }
+          gh release download $baseRelease.tagName --repo $env:GITHUB_REPOSITORY --pattern checksums.txt --dir upgrade-base
+          if ($LASTEXITCODE -ne 0) { throw "Could not download checksums.txt for $($baseRelease.tagName)." }
+          $checksumLine = @(
+              Get-Content -LiteralPath (Join-Path upgrade-base checksums.txt) |
+                  Where-Object { $_ -match ('^[0-9A-Fa-f]{64}\s+\*?' + [regex]::Escape($baseAsset) + '$') }
+          )
+          if ($checksumLine.Count -ne 1) { throw "A unique checksum for $baseAsset was not found." }
+          $expected = ([regex]::Match($checksumLine[0], '^([0-9A-Fa-f]{64})')).Groups[1].Value.ToLowerInvariant()
+          $actual = (Get-FileHash -LiteralPath (Join-Path upgrade-base $baseAsset) -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "Checksum mismatch for $baseAsset." }
+          Set-Content -LiteralPath upgrade-base/base-version.txt -Value $baseVersion -NoNewline
+          Set-Content -LiteralPath upgrade-base/base-asset.txt -Value $baseAsset -NoNewline
+      - name: Run verified upgrade smoke without repository credentials
+        shell: pwsh
+        env:
+          GH_TOKEN: ''
+          GITHUB_TOKEN: ''
+        run: |
+          $baseVersion = (Get-Content -LiteralPath upgrade-base/base-version.txt -Raw).Trim()
+          $baseAsset = (Get-Content -LiteralPath upgrade-base/base-asset.txt -Raw).Trim()
+          $upgradeVersion = $env:GITHUB_REF_NAME.TrimStart('v')
+          ./tests/installer-upgrade-smoke.ps1 `
+              -BaseInstaller (Join-Path upgrade-base $baseAsset) `
+              -UpgradeInstaller "SSH-Launchpad_${upgradeVersion}_Windows_x64_Installer_UNSIGNED.exe" `
+              -BaseVersion $baseVersion `
+              -UpgradeVersion $upgradeVersion
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: desktop-windows
           path: SSH-Launchpad_*_Windows_x64_Installer_UNSIGNED.exe
@@ -177,14 +240,19 @@ jobs:
   publish:
     needs: [cli, bootstrap, desktop-windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/download-artifact@v7
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           path: release-assets
           merge-multiple: true
       - name: Generate SBOM
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           path: .
           format: spdx-json

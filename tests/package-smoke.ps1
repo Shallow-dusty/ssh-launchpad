@@ -45,6 +45,44 @@ if ($releaseLayout) {
                 throw "Package smoke check failed: Windows portable missing $required"
             }
         }
+        $manifestEntry = $portableArchive.Entries |
+            Where-Object FullName -Match '(^|/)bundle-checksums\.txt$' |
+            Select-Object -First 1
+        $reader = New-Object IO.StreamReader($manifestEntry.Open(), (New-Object Text.UTF8Encoding($false, $true)))
+        try {
+            $bundleManifest = $reader.ReadToEnd()
+        }
+        finally {
+            $reader.Dispose()
+        }
+        if ($bundleManifest -notmatch '(?m)^[a-f0-9]{64}\s+离线帮助-中文\.md\r?$') {
+            throw 'Package smoke check failed: Windows portable checksum manifest is not valid UTF-8 or omits the Chinese help filename'
+        }
+        foreach ($line in $bundleManifest -split "\r?\n" | Where-Object { $_ }) {
+            if ($line -notmatch '^([a-f0-9]{64})\s+(.+)$') {
+                throw "Package smoke check failed: invalid Windows portable checksum line '$line'"
+            }
+            $expected = $Matches[1]
+            $entryName = $Matches[2].Replace('\', '/')
+            $entry = $portableArchive.Entries |
+                Where-Object { $_.FullName.Replace('\', '/') -eq $entryName } |
+                Select-Object -First 1
+            if (-not $entry) {
+                throw "Package smoke check failed: Windows portable checksum target missing: $entryName"
+            }
+            $stream = $entry.Open()
+            $hasher = [Security.Cryptography.SHA256]::Create()
+            try {
+                $actual = ([BitConverter]::ToString($hasher.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+            }
+            finally {
+                $hasher.Dispose()
+                $stream.Dispose()
+            }
+            if ($actual -ne $expected) {
+                throw "Package smoke check failed: Windows portable checksum mismatch: $entryName"
+            }
+        }
     }
     finally {
         $portableArchive.Dispose()

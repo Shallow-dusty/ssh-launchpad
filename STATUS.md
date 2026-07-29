@@ -1,10 +1,8 @@
 # Status
 
-Last locally verified: 2026-07-28
+Last locally verified: 2026-07-29
 
-Current release: [`v0.2.0`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.0)
-
-Release candidate: `v0.2.3`
+Current release: [`v0.2.3`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.3)
 
 ## v0.2.3 audit hardening
 
@@ -34,10 +32,11 @@ Release candidate: `v0.2.3`
   ShellChecked in CI.
 - Downloads are HTTPS-only, release notes are resolved from the pushed tag,
   and the frontend is split into focused modules while preserving the wizard.
-- Local candidate validation covers Go 1.25.12 vulnerability, race,
-  vet/static/security analysis, cross-compilation, ShellCheck, frontend build,
-  and 9 browser scenarios. Windows-native Pester, Wails/NSIS, installer upgrade,
-  and disposable-VM gates remain pending.
+- Release validation covers Go 1.25.12 vulnerability, race,
+  vet/static/security analysis, cross-compilation, ShellCheck, Windows
+  PowerShell 5.1 and PowerShell 7 Pester, frontend build, 9 browser scenarios,
+  Wails/NSIS, a verified v0.2.0-to-v0.2.3 installer upgrade, package/SBOM
+  checksums, and history plus extracted-archive secret scans.
 
 ## Current product
 
@@ -59,13 +58,15 @@ Release candidate: `v0.2.3`
 
 ## Validation
 
-### v0.2.3 candidate
+### v0.2.3 release
 
-The six audit P0 blockers are closed in code and regression tests. Local checks
-passed on 2026-07-28, but Windows-native Pester, Wails/NSIS, upgrade/uninstall,
-and disposable-VM evidence remain mandatory before tagging. See
+The six audit P0 blockers are closed in code and regression tests. The native
+release gates passed on 2026-07-29, including Windows PowerShell 5.1 and
+PowerShell 7 Pester, Wails/NSIS, a checksum-verified v0.2.0-to-v0.2.3
+upgrade/uninstall smoke, portable CLI execution, package checksums, SBOM, and
+secret/identity scans. See
 [`docs/v0.2.3-security-audit.md`](docs/v0.2.3-security-audit.md) for the closure
-matrix, completed checks, and pending gates.
+matrix, completed checks, and explicit validation boundary.
 
 ### Published v0.2.0 baseline
 
@@ -91,23 +92,21 @@ not notarized.
 ## Release evidence
 
 - Published Release:
-  <https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.0>
-- Tagged commit: `a2ab6a11ac1f854e4a9b0a87ed49278e9e694c70`.
-- Release workflow:
-  <https://github.com/Shallow-dusty/ssh-launchpad/actions/runs/29679501725>.
-- All ten downloaded assets passed the published SHA-256 manifest; the SPDX
-  JSON SBOM and archive content checks also passed.
-- The downloaded Windows x64 portable CLI reported `0.2.0`, schema `1`, and
-  UTF-8 no-BOM JSON. Its Chinese and English double-click launchers both
-  completed the read-only wizard smoke with exit code `0`.
-- The downloaded unsigned GUI installer completed silent install, first start,
-  and uninstall smoke; the installed application was removed afterward.
+  <https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.3>
+- All nine locally staged assets passed the SHA-256 manifest; all six portable
+  bundle manifests passed 74 inner-file checks, including UTF-8 Chinese
+  filenames. The SPDX JSON SBOM and archive content checks also passed.
+- The extracted Windows x64 portable CLI reported `0.2.3`, schema `1`, and
+  UTF-8 no-BOM JSON during a read-only Check.
+- The checksum-verified v0.2.0 installer upgraded in place to the unsigned
+  v0.2.3 installer, preserved an unrelated sentinel, updated version resources,
+  retained one shortcut/uninstall set, and cleanly uninstalled afterward.
 
 ## Promotion state
 
-`v0.2.0` passed the documented MVP promotion gate. The canonical local checkout
-is now `E:\coding\11.SSH-Launchpad`; the GitHub repository and Release URLs
-remain the portable runtime contract.
+`v0.2.3` passed the documented audit-hardening release gate. The canonical
+local checkout is now `E:\coding\11.SSH-Launchpad`; the GitHub repository and
+Release URLs remain the portable runtime contract.
 
 The former `01.Agent-CLI/15.SSH-Launchpad` incubation path is retired. Legacy
 `00.scripts/01.SSH快速安装` remains archived, and the 3070 workspace consumes this

@@ -26,8 +26,10 @@ if ($parts.Count -ne 3 -or @($parts | Where-Object { $_ -notmatch '^\d+$' }).Cou
 $infoPath = Join-Path $repository 'build\windows\info.json'
 $infoExisted = Test-Path -LiteralPath $infoPath
 $originalInfo = if ($infoExisted) { [IO.File]::ReadAllBytes($infoPath) } else { $null }
+$originalFrontendVersion = $env:VITE_APP_VERSION
 
 try {
+    $env:VITE_APP_VERSION = $Version
     $infoSource = (Get-Content -LiteralPath $infoTemplate -Raw).Replace('@VERSION@', $Version)
     [IO.File]::WriteAllText($infoPath, $infoSource, (New-Object Text.UTF8Encoding($false)))
 
@@ -39,6 +41,12 @@ try {
     }
 }
 finally {
+    if ($null -eq $originalFrontendVersion) {
+        Remove-Item Env:\VITE_APP_VERSION -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:VITE_APP_VERSION = $originalFrontendVersion
+    }
     if ($infoExisted) {
         [IO.File]::WriteAllBytes($infoPath, $originalInfo)
     }

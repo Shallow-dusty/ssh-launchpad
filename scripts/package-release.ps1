@@ -62,7 +62,11 @@ try {
             $relative = $_.FullName.Substring($stage.Length + 1).Replace('\', '/')
             "$((Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant())  $relative"
         }
-        $bundleHashLines | Set-Content -LiteralPath (Join-Path $stage 'bundle-checksums.txt') -Encoding ascii
+        [IO.File]::WriteAllLines(
+            (Join-Path $stage 'bundle-checksums.txt'),
+            [string[]]$bundleHashLines,
+            (New-Object Text.UTF8Encoding($false))
+        )
         if ($target.Archive -eq 'zip') {
             Compress-Archive -Path (Join-Path $stage '*') -DestinationPath (Join-Path $releaseRoot "$assetBase.zip")
         }
@@ -101,6 +105,23 @@ if ($IncludeWindowsDesktop) {
 $stagingDirectories = Get-ChildItem -LiteralPath $releaseRoot -Directory
 foreach ($directory in $stagingDirectories) {
     Remove-Item -LiteralPath $directory.FullName -Recurse -Force
+}
+$syft = Get-Command syft -ErrorAction Stop
+$sbomPath = Join-Path $releaseRoot 'ssh-launchpad.spdx.json'
+& $syft.Source "dir:$repository" `
+    --source-name 'ssh-launchpad' `
+    --source-version $Version `
+    --exclude './.git/**' `
+    --exclude './build/**' `
+    --exclude './dist/**' `
+    --exclude './artifacts/**' `
+    --exclude './output/**' `
+    --exclude './frontend/node_modules/**' `
+    --exclude './profiles/private/**' `
+    --exclude './profiles/*.local.*' `
+    --output "spdx-json=$sbomPath"
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $sbomPath)) {
+    throw 'Syft SBOM generation failed'
 }
 $hashLines = Get-ChildItem -LiteralPath $releaseRoot -File |
     Sort-Object Name |
