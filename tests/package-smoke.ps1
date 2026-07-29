@@ -96,10 +96,13 @@ if ($releaseLayout) {
         if ($LASTEXITCODE -ne 0) {
             throw "Package smoke check failed: cannot list $($unixAsset.Name)"
         }
-        if (-not ($listing | Where-Object { $_ -match '^-rwxr-xr-x\s+.*\sssh-launchpad$' })) {
+        if (-not (Test-TarListingExecutable -Listing $listing -RelativePath 'ssh-launchpad')) {
             throw "Package smoke check failed: $($unixAsset.Name) ssh-launchpad is not mode 0755"
         }
-        if ($unixAsset.Name -match '_macOS_' -and -not ($listing | Where-Object { $_ -match '^-rwxr-xr-x\s+.*\sStart SSH Launchpad\.command$' })) {
+        if (
+            $unixAsset.Name -match '_macOS_' -and
+            -not (Test-TarListingExecutable -Listing $listing -RelativePath 'Start SSH Launchpad.command')
+        ) {
             throw "Package smoke check failed: $($unixAsset.Name) .command launcher is not mode 0755"
         }
     }

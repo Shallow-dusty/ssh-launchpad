@@ -37,3 +37,20 @@ function Get-ArchiveEntryForManifestTarget {
         Where-Object { $_.FullName.Replace('\', '/') -eq $expectedPath } |
         Select-Object -First 1
 }
+
+function Test-TarListingExecutable {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [string[]]$Listing,
+        [Parameter(Mandatory)]
+        [string]$RelativePath
+    )
+
+    $escapedPath = [regex]::Escape($RelativePath.Replace('\', '/'))
+    return [bool](
+        $Listing |
+            Where-Object { $_ -match "^-rwxr-xr-x\s+.*\s(?:.*/)?$escapedPath$" } |
+            Select-Object -First 1
+    )
+}
