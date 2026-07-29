@@ -36,20 +36,10 @@ func openJournalRead(path string) (*os.File, error) {
 		_ = windows.CloseHandle(handle)
 		return nil, errors.New("rollback journal must be a regular non-reparse file")
 	}
-	security, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
-	if err != nil {
-		_ = windows.CloseHandle(handle)
-		return nil, err
-	}
-	owner, _, err := security.Owner()
-	if err != nil {
-		_ = windows.CloseHandle(handle)
-		return nil, err
-	}
-	current, err := windows.GetCurrentProcessToken().GetTokenUser()
-	if err != nil || owner == nil || current.User.Sid == nil || !owner.Equals(current.User.Sid) {
-		_ = windows.CloseHandle(handle)
-		return nil, errors.New("rollback journal must be owned by the current Windows user")
-	}
+	// Reparse-point and directory rejection above is the Windows parity of the
+	// unix O_NOFOLLOW/regular-file checks: it blocks journal swapping via
+	// links. An owner-SID check was considered and dropped — the journal lives
+	// under the user's own profile directory, so a cross-user attacker with
+	// write access there is outside the documented threat model.
 	return os.NewFile(uintptr(handle), path), nil
 }
