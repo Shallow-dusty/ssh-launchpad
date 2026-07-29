@@ -6,6 +6,12 @@ All notable changes are documented here.
 
 ### Added
 
+- Personal cards: export a compact `.sshlaunchpad-card` on the controller
+  carrying its public keys, SSH port, display labels, network mode, and an
+  optional Tailscale auth key; import it on a new device to prefill the
+  wizard and start with the read-only Check. Cards never contain SSH private
+  keys; unknown fields written by newer versions are ignored for forward
+  compatibility.
 - Support `transport.authKey` in profiles for unattended Tailnet bootstrap:
   when a valid `tskey-auth-` key is present and Tailscale is not online, a
   single Apply installs (if requested), joins the tailnet, and continues with

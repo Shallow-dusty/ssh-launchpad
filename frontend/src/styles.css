@@ -117,6 +117,10 @@ pre { max-height: 24rem; overflow: auto; padding: 1rem; border-radius: 12px; col
 }
 .role-pair { margin-top: .35rem; display: flex; align-items: center; flex-wrap: wrap; gap: .35rem .65rem; color: var(--muted); font-size: .86rem; }
 .role-pair span { display: inline-flex; align-items: center; gap: .3rem; }
+.personal-card-strip { margin-top: 1rem; padding: 1rem 1.15rem; display: grid; grid-template-columns: auto 1fr auto; gap: 1rem; align-items: center; border-radius: 18px; }
+.personal-card-strip p, .card-loaded-note p { margin: .25rem 0 0; color: var(--muted); }
+.personal-card-strip .toolbar { margin: 0; justify-content: flex-end; }
+.personal-card-icon { width: 2.7rem; height: 2.7rem; display: grid; place-items: center; border-radius: 13px; color: var(--accent); background: color-mix(in srgb, var(--accent) 11%, var(--solid)); }
 
 .task-grid { margin-top: 1.1rem; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .task-card { position: relative; min-height: 174px; padding: 1.35rem; display: grid; grid-template-columns: auto 1fr auto; gap: 1rem; align-items: start; border-radius: var(--radius); color: var(--text); text-align: left; transition: transform 150ms ease, border-color 150ms ease; }
@@ -161,6 +165,8 @@ button.task-card { width: 100%; }
 .info-note, .danger-note, .boundary-note, .unsigned-banner, .success-note, .inline-error { padding: .85rem 1rem; border-radius: 13px; }
 .inline-error:empty { display: none; }
 .info-note, .boundary-note { color: var(--muted); background: var(--soft); }
+.card-loaded-note { margin-top: 1rem; padding: .9rem 1rem; display: flex; gap: .75rem; align-items: flex-start; border-radius: 13px; color: var(--accent); }
+.card-loaded-note small { display: block; margin-top: .3rem; color: var(--muted); }
 .danger-note, .unsigned-banner, .inline-error { color: var(--bad); background: var(--bad-soft); border: 1px solid color-mix(in srgb, var(--bad) 25%, transparent); }
 .success-note { color: var(--good); background: var(--good-soft); }
 
@@ -178,6 +184,7 @@ button.task-card { width: 100%; }
 .field > span { color: var(--muted); font-size: .8rem; font-weight: 700; }
 .field input, .field select, .field textarea { width: 100%; min-height: 2.75rem; padding: .68rem .78rem; border: 1px solid var(--line); border-radius: 11px; color: var(--text); background: var(--solid); }
 .field textarea { min-height: 7rem; resize: vertical; font: .8rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.personal-card-panel .field textarea { min-height: 4.5rem; font-family: inherit; }
 .field small { color: var(--muted); }
 .form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 1rem; }
 .form-grid .field.full { grid-column: 1 / -1; }
@@ -243,7 +250,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .app-header { align-items: flex-start; }
   .backend-pill { display: none; }
   .workspace { padding: 1rem; }
-  .task-grid, .plain-grid, .connection-card, .detail-grid { grid-template-columns: 1fr; }
+  .task-grid, .plain-grid, .connection-card, .detail-grid, .personal-card-strip { grid-template-columns: 1fr; }
+  .personal-card-strip .toolbar { justify-content: flex-start; }
   .task-card.recommended { grid-column: auto; }
   .stepper { gap: .3rem; }
   .stepper li { padding: .55rem .15rem; font-size: .7rem; }

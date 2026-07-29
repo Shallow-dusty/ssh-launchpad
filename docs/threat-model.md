@@ -27,6 +27,7 @@
 | Uninstall removes unrelated files | fixed install directory; uninstaller deletes only owned files and removes the directory only when empty |
 | Log leaks device details | local reports use restrictive permissions; artifacts are excluded from releases |
 | Tailscale auth key leaks through plans, journals, exports, or reports | the reviewable plan carries only a marker command and the key is materialized inside Apply; action output and support reports redact `tskey-auth-` values; profile YAML exports strip the field |
+| A shared personal card leaks the optional auth key | the key is optional, one-time keys are recommended, and the UI and README instruct treating the card as a credential file sent only to devices the user intends to control |
 
 Support-report redaction is heuristic, not a cryptographic guarantee. Review a
 report before sharing it and do not distribute one that still contains a

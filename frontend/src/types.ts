@@ -6,7 +6,7 @@ export interface Profile {
   name: string;
   target: { platform: string; wsl?: boolean };
   ssh: { enabled: boolean; port: number; publicKeys: string[]; passwordAuthentication: boolean };
-  transport: { mode: string; install: boolean };
+  transport: { mode: string; install: boolean; authKey?: string };
   exposure: { mode: string; customCidrs: string[] };
   download: {
     strategy: string;
@@ -116,6 +116,23 @@ export interface PublicKeyInfo {
   generated: boolean;
 }
 
+export interface PersonalCard {
+  schemaVersion: number;
+  kind: "ssh-launchpad-personal-card";
+  displayName: string;
+  controllerName?: string;
+  note?: string;
+  ssh: {
+    port: number;
+    publicKeys: string[];
+  };
+  tailscale: {
+    mode: "tailnet" | "lan";
+    install: boolean;
+    authKey?: string;
+  };
+}
+
 export interface ElevatedJob {
   id: string;
   state: "waiting-for-permission" | "running" | "completed" | "failed" | "cancelled";
@@ -148,6 +165,8 @@ declare global {
           ExportReport(report: Report): Promise<string>;
           ImportProfile(): Promise<Profile>;
           ExportProfile(profile: Profile): Promise<string>;
+          ImportPersonalCard(): Promise<PersonalCard>;
+          ExportPersonalCard(card: PersonalCard): Promise<string>;
           DiscoverPublicKeys(): Promise<PublicKeyInfo[]>;
           GenerateControllerKey(label: string): Promise<PublicKeyInfo>;
           ImportPublicKey(): Promise<PublicKeyInfo>;

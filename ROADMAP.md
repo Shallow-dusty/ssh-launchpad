@@ -40,6 +40,16 @@
 - Tag-derived release notes and a modularized frontend with transport-aware
   health counting.
 
+## v0.2.4 — personal cards and unattended bootstrap
+
+- Export and import a compact personal card (controller public keys, SSH
+  port, display labels, network mode, and an optional Tailscale auth key) so
+  a new device can be onboarded without editing YAML.
+- `transport.authKey` enables one-pass unattended Tailnet bootstrap; the key
+  is kept out of plans, journals, exported profiles, and reports, and the
+  trade-offs are documented in the threat model.
+- Without a card or auth key, the phased sign-in flow is unchanged.
+
 ## v0.3.0 candidates
 
 - Expanded Windows Sandbox/VM interrupted servicing, repeat Apply, cleanup, and

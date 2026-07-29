@@ -11,7 +11,7 @@ import {
   renderAdvanced, renderConfirmActions, renderHome, renderWizard, simpleEvent,
   type InstallState, type WizardMode
 } from "./views";
-import type { DesktopRequest, ElevatedJob, Profile, PublicKeyInfo, Report, Stage } from "./types";
+import type { DesktopRequest, ElevatedJob, PersonalCard, Profile, PublicKeyInfo, Report, Stage } from "./types";
 import { APP_VERSION } from "./version";
 
 const defaultProfile: Profile = {
@@ -19,7 +19,7 @@ const defaultProfile: Profile = {
   name: "recommended",
   target: { platform: "auto" },
   ssh: { enabled: true, port: 22, publicKeys: [], passwordAuthentication: false },
-  transport: { mode: "tailnet", install: false },
+  transport: { mode: "tailnet", install: false, authKey: "" },
   exposure: { mode: "tailnet", customCidrs: [] },
   download: { strategy: "official", mirrorBaseUrl: "", proxyUrl: "", offlineBundle: "", offlineSha256: "", cacheDir: "", retries: 3 },
   safety: { confirmHighRisk: true, preventSelfCut: true, scheduledDelaySeconds: 20, autoRollback: true },
@@ -34,6 +34,11 @@ const state: {
   mode: WizardMode;
   step: number;
   profile: Profile;
+  personalCard: {
+    displayName: string;
+    controllerName: string;
+    note: string;
+  };
   report?: Report;
   planReport?: Report;
   verifyReport?: Report;
@@ -52,6 +57,11 @@ const state: {
   mode: "setup",
   step: 0,
   profile: structuredClone(defaultProfile),
+  personalCard: {
+    displayName: "",
+    controllerName: "",
+    note: ""
+  },
   busy: false,
   backend: Boolean(window.go?.main?.App),
   detectedKeys: [],
@@ -156,6 +166,7 @@ function buildShell(): void {
       </form>
     </dialog>
     <input id="profile-file" class="sr-only" type="file" accept=".yaml,.yml,.json" />
+    <input id="card-file" class="sr-only" type="file" accept=".sshlaunchpad-card,.json" />
     <input id="key-file" class="sr-only" type="file" accept=".pub,.txt" />
   `;
   bindGlobalEvents();
@@ -189,6 +200,7 @@ function bindGlobalEvents(): void {
     void beginSafeInstall();
   });
   document.querySelector<HTMLInputElement>("#profile-file")?.addEventListener("change", importProfileFromBrowser);
+  document.querySelector<HTMLInputElement>("#card-file")?.addEventListener("change", importPersonalCardFromBrowser);
   document.querySelector<HTMLInputElement>("#key-file")?.addEventListener("change", importKeyFromBrowser);
 }
 
@@ -244,6 +256,13 @@ function bindPageEvents(): void {
   document.querySelector("#finish")?.addEventListener("click", goHome);
   document.querySelector("#import-profile")?.addEventListener("click", () => void importProfile());
   document.querySelector("#export-profile")?.addEventListener("click", () => void exportProfile());
+  document.querySelectorAll("#import-personal-card, #import-personal-card-advanced").forEach((button) => button.addEventListener("click", () => void importPersonalCard()));
+  document.querySelector("#create-personal-card")?.addEventListener("click", () => {
+    state.view = "advanced";
+    renderPage();
+    requestAnimationFrame(() => document.querySelector<HTMLInputElement>("#card-display-name")?.focus());
+  });
+  document.querySelector("#export-personal-card")?.addEventListener("click", () => void exportPersonalCard());
   document.querySelector("#save-advanced")?.addEventListener("click", saveAdvanced);
   document.querySelector("#advanced-check")?.addEventListener("click", () => void runAdvancedStage("check"));
   document.querySelector("#advanced-plan")?.addEventListener("click", () => void runAdvancedStage("plan"));
@@ -300,6 +319,7 @@ async function useGuidedMode(mode: "tailnet" | "lan"): Promise<void> {
   state.profile.ssh.passwordAuthentication = false;
   state.profile.transport.mode = mode;
   state.profile.exposure.mode = mode;
+  if (mode === "lan") state.profile.transport.authKey = "";
   state.profile.transport.install = mode === "tailnet" && !state.report?.snapshot?.tailscale.installed;
   state.step = 2;
   state.busy = true;
@@ -520,14 +540,128 @@ async function exportProfile(): Promise<void> {
   showToast(t("profileExported"));
 }
 
+async function importPersonalCard(): Promise<void> {
+  try {
+    if (window.go?.main?.App) {
+      const card = await window.go.main.App.ImportPersonalCard();
+      if (card.schemaVersion) await applyPersonalCard(card);
+    } else {
+      document.querySelector<HTMLInputElement>("#card-file")!.click();
+    }
+  } catch (error) {
+    showToast(friendlyError(error));
+  }
+}
+
+async function exportPersonalCard(): Promise<void> {
+  saveAdvanced();
+  const card = buildPersonalCard();
+  const error = await validatePersonalCardClient(card);
+  if (error) {
+    showToast(error);
+    return;
+  }
+  if (window.go?.main?.App) {
+    const path = await window.go.main.App.ExportPersonalCard(card);
+    if (path) showToast(t("personalCardExported"));
+    return;
+  }
+  downloadText(`${safeCardFilename(card.displayName)}.sshlaunchpad-card`, `${JSON.stringify(card, null, 2)}\n`, "application/json;charset=utf-8");
+  showToast(t("personalCardExported"));
+}
+
+function buildPersonalCard(): PersonalCard {
+  return {
+    schemaVersion: 1,
+    kind: "ssh-launchpad-personal-card",
+    displayName: state.personalCard.displayName.trim(),
+    controllerName: state.personalCard.controllerName.trim() || undefined,
+    note: state.personalCard.note.trim() || undefined,
+    ssh: {
+      port: state.profile.ssh.port,
+      publicKeys: [...state.profile.ssh.publicKeys]
+    },
+    tailscale: {
+      mode: state.profile.transport.mode === "lan" ? "lan" : "tailnet",
+      install: state.profile.transport.mode === "tailnet" && state.profile.transport.install,
+      authKey: state.profile.transport.authKey?.trim() || undefined
+    }
+  };
+}
+
+async function applyPersonalCard(card: PersonalCard): Promise<void> {
+  const error = await validatePersonalCardClient(card);
+  if (error) throw new Error(error);
+  state.personalCard = {
+    displayName: card.displayName.trim(),
+    controllerName: card.controllerName?.trim() ?? "",
+    note: card.note?.trim() ?? ""
+  };
+  state.profile = normalizeProfile({
+    ...structuredClone(defaultProfile),
+    name: card.displayName.trim(),
+    ssh: {
+      ...structuredClone(defaultProfile.ssh),
+      port: card.ssh.port,
+      publicKeys: [...card.ssh.publicKeys]
+    },
+    transport: {
+      mode: card.tailscale.mode,
+      install: card.tailscale.mode === "tailnet" && card.tailscale.install,
+      authKey: card.tailscale.mode === "tailnet" ? card.tailscale.authKey?.trim() ?? "" : ""
+    },
+    exposure: {
+      ...structuredClone(defaultProfile.exposure),
+      mode: card.tailscale.mode
+    },
+    labels: {
+      experience: "guided",
+      cardDisplayName: card.displayName.trim(),
+      ...(card.controllerName?.trim() ? { cardControllerName: card.controllerName.trim() } : {}),
+      ...(card.note?.trim() ? { cardNote: card.note.trim() } : {})
+    }
+  });
+  const firstKey = card.ssh.publicKeys[0]!;
+  state.selectedKey = { label: card.controllerName?.trim() || t("personalCardTitle"), path: "", publicKey: firstKey, generated: false };
+  for (const publicKey of card.ssh.publicKeys) {
+    if (!state.detectedKeys.some((existing) => existing.publicKey === publicKey)) {
+      state.detectedKeys.push({ label: card.controllerName?.trim() || t("personalCardTitle"), path: "", publicKey, generated: false });
+    }
+  }
+  showToast(t("personalCardImported"));
+  startWizard("setup");
+}
+
+async function validatePersonalCardClient(card: PersonalCard): Promise<string> {
+  if (card.schemaVersion !== 1 || card.kind !== "ssh-launchpad-personal-card") return t("personalCardInvalid");
+  if (!card.displayName?.trim() || card.displayName.trim().length > 128) return t("cardDisplayNameRequired");
+  if (!Number.isInteger(card.ssh?.port) || card.ssh.port < 1 || card.ssh.port > 65535) return t("personalCardInvalid");
+  if (!Array.isArray(card.ssh?.publicKeys) || card.ssh.publicKeys.length === 0) return t("keyRequired");
+  for (const key of card.ssh.publicKeys) {
+    if (key.includes("PRIVATE KEY") || !(await publicKeyIsValid(key))) return t("personalCardInvalid");
+  }
+  if (!["tailnet", "lan"].includes(card.tailscale?.mode)) return t("personalCardInvalid");
+  if (card.tailscale.mode === "lan" && card.tailscale.authKey) return t("personalCardInvalid");
+  if (card.tailscale.authKey && (!card.tailscale.authKey.startsWith("tskey-auth-") || /[\r\n\0]/.test(card.tailscale.authKey))) return t("personalCardInvalid");
+  return "";
+}
+
+function safeCardFilename(value: string): string {
+  return value.trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").replace(/[. ]+$/g, "") || "ssh-launchpad-personal";
+}
+
 function saveAdvanced(): void {
   const platform = document.querySelector<HTMLSelectElement>("#target-platform");
   if (!platform) return;
+  state.personalCard.displayName = valueOf("card-display-name");
+  state.personalCard.controllerName = valueOf("card-controller-name");
+  state.personalCard.note = valueOf("card-note");
   state.profile.target.platform = platform.value;
   state.profile.ssh.port = Number(valueOf("ssh-port"));
   state.profile.transport.mode = valueOf("transport-mode");
   state.profile.exposure.mode = valueOf("exposure-mode");
   state.profile.transport.install = state.profile.transport.mode === "tailnet" && !state.report?.snapshot?.tailscale.installed;
+  state.profile.transport.authKey = state.profile.transport.mode === "tailnet" ? valueOf("card-tailscale-auth-key").trim() : "";
   state.profile.download.strategy = valueOf("download-strategy");
   state.profile.ssh.publicKeys = valueOf("advanced-keys").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   state.profile.safety.preventSelfCut = checked("prevent-self-cut");
@@ -599,6 +733,26 @@ function importProfileFromBrowser(event: Event): void {
       renderPage();
     } catch {
       showToast(state.language === "zh-CN" ? "浏览器预览仅导入 JSON；桌面应用支持 YAML 和 JSON。" : "Browser preview imports JSON; the desktop app supports YAML and JSON.");
+    }
+  });
+}
+
+function importPersonalCardFromBrowser(event: Event): void {
+  const input = event.currentTarget as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  void file.text().then(async (text) => {
+    try {
+      if (text.includes("PRIVATE KEY")) {
+        throw new Error(state.language === "zh-CN" ? "拒绝导入私钥。个人信息卡只能包含公钥。" : "Private keys are rejected. A personal card may contain public keys only.");
+      }
+      const card = JSON.parse(text) as PersonalCard;
+      await applyPersonalCard(card);
+    } catch (error) {
+      const message = friendlyError(error);
+      showToast(message === t("errorGeneric") ? t("personalCardInvalid") : message);
+    } finally {
+      input.value = "";
     }
   });
 }
