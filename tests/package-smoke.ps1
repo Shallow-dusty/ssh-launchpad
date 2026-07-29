@@ -7,6 +7,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'package-smoke-lib.ps1')
+
 $root = (Resolve-Path -LiteralPath $Directory).Path
 $releaseLayout = Test-Path -LiteralPath (Join-Path $root 'checksums.txt')
 
@@ -64,9 +66,10 @@ if ($releaseLayout) {
             }
             $expected = $Matches[1]
             $entryName = $Matches[2].Replace('\', '/')
-            $entry = $portableArchive.Entries |
-                Where-Object { $_.FullName.Replace('\', '/') -eq $entryName } |
-                Select-Object -First 1
+            $entry = Get-ArchiveEntryForManifestTarget `
+                -Entries $portableArchive.Entries `
+                -ManifestFullName $manifestEntry.FullName `
+                -ManifestTarget $entryName
             if (-not $entry) {
                 throw "Package smoke check failed: Windows portable checksum target missing: $entryName"
             }
