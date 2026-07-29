@@ -44,7 +44,7 @@ func (SystemProbe) Check(ctx context.Context, profile Profile) (Snapshot, error)
 	s.SSHConfigValid = probeSSHConfig(ctx, platform, s.SSHServer)
 	s.Network = probeNetwork(ctx)
 	s.Tailscale = probeTailscale(ctx)
-	effective := probeSSHEffectiveConfig(ctx, platform, s.SSHServer, profile, s)
+	effective := probeSSHEffectiveConfig(ctx, platform, s.SSHServer)
 	if effective.Checked {
 		// sshd -T parsed the complete effective configuration successfully. It
 		// is a sufficient syntax check when an unprivileged probe cannot read
@@ -179,7 +179,11 @@ type effectiveSSHConfig struct {
 	AuthorizedKeysFile           string
 }
 
-func probeSSHEffectiveConfig(ctx context.Context, platform Platform, server Capability, profile Profile, snapshot Snapshot) effectiveSSHConfig {
+// probeSSHEffectiveConfig dumps the global effective sshd configuration with
+// a single sshd -T run. Per-connection Match blocks (sshd -T -C ...) are not
+// evaluated: hosts whose authentication policy depends on Match criteria are
+// treated as unchecked, which fails closed. See docs/platform-support.md.
+func probeSSHEffectiveConfig(ctx context.Context, platform Platform, server Capability) effectiveSSHConfig {
 	if !server.Installed {
 		return effectiveSSHConfig{}
 	}
@@ -190,89 +194,19 @@ func probeSSHEffectiveConfig(ctx context.Context, platform Platform, server Capa
 	if path == "" {
 		return effectiveSSHConfig{}
 	}
-	baseArgs := []string{"-T"}
+	args := []string{"-T"}
 	if platform == PlatformWindows {
 		programData := os.Getenv("ProgramData")
 		if programData == "" {
 			programData = `C:\ProgramData`
 		}
-		baseArgs = append(baseArgs, "-f", filepath.Join(programData, "ssh", "sshd_config"))
+		args = append(args, "-f", filepath.Join(programData, "ssh", "sshd_config"))
 	}
-	probe := func(connection string) effectiveSSHConfig {
-		args := append([]string(nil), baseArgs...)
-		if connection != "" {
-			args = append(args, "-C", connection)
-		}
-		out, err := runCommand(ctx, 8*time.Second, path, args...)
-		if err != nil {
-			return effectiveSSHConfig{}
-		}
-		return parseEffectiveSSHConfig(out)
-	}
-	combined := probe("")
-	if !combined.Checked {
+	out, err := runCommand(ctx, 8*time.Second, path, args...)
+	if err != nil {
 		return effectiveSSHConfig{}
 	}
-	if snapshot.TargetUser == "" || strings.ContainsAny(snapshot.TargetUser+snapshot.Hostname, ",\n\r") {
-		return combined
-	}
-	localAddress := authenticationProbeLocalAddress(profile, snapshot)
-	targetAuthorizedKeysFile := ""
-	for _, address := range authenticationProbeAddresses(profile, snapshot) {
-		connection := fmt.Sprintf("user=%s,host=%s,addr=%s,laddr=%s,lport=%d", snapshot.TargetUser, snapshot.Hostname, address, localAddress, profile.SSH.Port)
-		candidate := probe(connection)
-		if !candidate.Checked {
-			return effectiveSSHConfig{}
-		}
-		combined.PasswordAuthentication = combined.PasswordAuthentication || candidate.PasswordAuthentication
-		combined.KbdInteractiveAuthentication = combined.KbdInteractiveAuthentication || candidate.KbdInteractiveAuthentication
-		combined.PubkeyAuthentication = combined.PubkeyAuthentication && candidate.PubkeyAuthentication
-		if candidate.AuthorizedKeysFile == "" || (targetAuthorizedKeysFile != "" && targetAuthorizedKeysFile != candidate.AuthorizedKeysFile) {
-			return effectiveSSHConfig{}
-		}
-		targetAuthorizedKeysFile = candidate.AuthorizedKeysFile
-	}
-	if targetAuthorizedKeysFile != "" {
-		combined.AuthorizedKeysFile = targetAuthorizedKeysFile
-	}
-	return combined
-}
-
-func authenticationProbeLocalAddress(profile Profile, snapshot Snapshot) string {
-	if profile.Exposure.Mode == "tailnet" && snapshot.Tailscale.IP != "" {
-		return snapshot.Tailscale.IP
-	}
-	if len(snapshot.Network.LANIPs) > 0 {
-		return snapshot.Network.LANIPs[0]
-	}
-	return "127.0.0.1"
-}
-
-func authenticationProbeAddresses(profile Profile, snapshot Snapshot) []string {
-	var addresses []string
-	switch profile.Exposure.Mode {
-	case "tailnet":
-		addresses = []string{"100.64.0.1", "fd7a:115c:a1e0::1"}
-	case "lan":
-		for _, scope := range snapshot.Network.LANScopes {
-			if _, network, err := net.ParseCIDR(scope); err == nil {
-				addresses = append(addresses, network.IP.String())
-			}
-		}
-	case "custom":
-		for _, scope := range profile.Exposure.CustomCIDRs {
-			if _, network, err := net.ParseCIDR(scope); err == nil {
-				addresses = append(addresses, network.IP.String())
-			}
-		}
-	}
-	if len(addresses) == 0 {
-		addresses = append(addresses, "127.0.0.1")
-	}
-	if len(addresses) > 8 {
-		addresses = addresses[:8]
-	}
-	return addresses
+	return parseEffectiveSSHConfig(out)
 }
 
 func parseEffectiveSSHConfig(out []byte) effectiveSSHConfig {

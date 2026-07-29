@@ -33,6 +33,10 @@ does not require ANSI color.
   than assuming the host is already secured; re-run Check as root or provide an
   explicit `exposure.mode: custom` CIDR set when the local account cannot read
   the full firewall state.
+- SSH authentication is probed with a single `sshd -T` dump of the global
+  effective configuration. Per-connection `Match` blocks (`sshd -T -C ...`)
+  are not evaluated; hosts whose authentication policy depends on `Match`
+  criteria are treated as unchecked, which fails closed as a plan blocker.
 - Windows artifacts are unsigned. macOS artifacts are not signed/notarized and
   may require the user to approve the downloaded file in system settings.
 - Linux desktop entry launch depends on the file manager honoring `Terminal=true`
