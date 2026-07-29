@@ -26,9 +26,9 @@ All notable changes are documented here.
   through the shared versioned elevation protocol; changed plans are rejected.
   Pre-create privileged output files as the standard user, reject redirected
   response paths and reparse points, and preserve file ownership.
-- Replace age-only CLI locking with live process ownership and token-checked
-  cleanup; validate generated PowerShell and POSIX commands with native parsers
-  and ShellCheck.
+- Replace age-only CLI locking with live PID ownership and stale-lock
+  recovery; validate generated PowerShell and POSIX commands with native
+  parsers and ShellCheck.
 - Require HTTPS for all initial and redirected downloads, hash-pin offline
   executables and execute only verified staged bytes, with no runtime plaintext
   override, and select tag-matched release notes at publish time.

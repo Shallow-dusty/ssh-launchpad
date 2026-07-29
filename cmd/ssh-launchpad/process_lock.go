@@ -1,25 +1,24 @@
 package main
 
 import (
-	"bytes"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 )
 
 var errProcessLockHeld = errors.New("another SSH Launchpad wizard is running")
 
-type processLockRecord struct {
-	PID     int    `json:"pid"`
-	Token   string `json:"token"`
-	Created string `json:"created"`
-}
-
+// acquireProcessLock prevents two interactive wizards from running at once.
+// The design is deliberately simple: an exclusive-create file holding the
+// owner's PID, with stale-lock recovery once that PID is gone. Unlock just
+// deletes the file. The theoretical race (a replacement lock appearing
+// between our staleness check and another owner's unlock) is accepted: the
+// worst outcome is two wizards open side by side, and every state-changing
+// action still requires explicit confirmation.
 func acquireProcessLock() (func(), error) {
 	cache, err := os.UserCacheDir()
 	if err != nil {
@@ -32,98 +31,57 @@ func acquireProcessLockAt(path string) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	tokenBytes := make([]byte, 16)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		return nil, err
-	}
-	record := processLockRecord{
-		PID:     os.Getpid(),
-		Token:   hex.EncodeToString(tokenBytes),
-		Created: time.Now().UTC().Format(time.RFC3339Nano),
-	}
-	data, err := json.Marshal(record)
-	if err != nil {
-		return nil, err
-	}
-	data = append(data, '\n')
-
-	for attempt := 0; attempt < 3; attempt++ {
-		file, createErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if createErr == nil {
-			if _, writeErr := file.Write(data); writeErr != nil {
+	pid := strconv.Itoa(os.Getpid()) + "\n"
+	for attempt := 0; attempt < 2; attempt++ {
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err == nil {
+			if _, writeErr := file.WriteString(pid); writeErr != nil {
 				_ = file.Close()
-				_ = removeLockIfUnchanged(path, data)
+				_ = os.Remove(path)
 				return nil, writeErr
 			}
-			if syncErr := file.Sync(); syncErr != nil {
-				_ = file.Close()
-				_ = removeLockIfUnchanged(path, data)
-				return nil, syncErr
-			}
 			if closeErr := file.Close(); closeErr != nil {
-				_ = removeLockIfUnchanged(path, data)
+				_ = os.Remove(path)
 				return nil, closeErr
 			}
-			return func() { _ = removeLockIfUnchanged(path, data) }, nil
+			return func() { _ = os.Remove(path) }, nil
 		}
-		if !errors.Is(createErr, os.ErrExist) {
-			return nil, createErr
+		if !errors.Is(err, os.ErrExist) {
+			return nil, err
 		}
-		stale, existing, staleErr := staleProcessLock(path)
+		stale, staleErr := staleProcessLock(path)
 		if staleErr != nil {
 			return nil, staleErr
 		}
 		if !stale {
 			return nil, errProcessLockHeld
 		}
-		if err := removeLockIfUnchanged(path, existing); err != nil {
-			if errors.Is(err, errProcessLockHeld) {
-				continue
-			}
-			return nil, err
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("remove stale process lock: %w", err)
 		}
 	}
 	return nil, errProcessLockHeld
 }
 
-func staleProcessLock(path string) (bool, []byte, error) {
-	info, err := os.Lstat(path)
+// staleProcessLock reports whether the lock file belongs to a dead process.
+// A file that does not contain a plain PID (for example after a crash
+// mid-write) gets a short grace period so a just-created lock is not stolen
+// from under its living writer.
+func staleProcessLock(path string) (bool, error) {
+	info, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return true, nil, nil
+			return true, nil
 		}
-		return false, nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return false, nil, errors.New("interactive lock path is not a regular file")
+		return false, err
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return false, nil, err
+		return false, err
 	}
-	var record processLockRecord
-	if json.Unmarshal(data, &record) != nil || record.PID <= 0 || record.Token == "" {
-		if time.Since(info.ModTime()) < 5*time.Minute {
-			return false, data, nil
-		}
-		return true, data, nil
+	pid, convErr := strconv.Atoi(strings.TrimSpace(string(data)))
+	if convErr != nil || pid <= 0 {
+		return time.Since(info.ModTime()) >= 5*time.Minute, nil
 	}
-	return !processRunning(record.PID), data, nil
-}
-
-func removeLockIfUnchanged(path string, expected []byte) error {
-	current, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	if !bytes.Equal(current, expected) {
-		return errProcessLockHeld
-	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove process lock: %w", err)
-	}
-	return nil
+	return !processRunning(pid), nil
 }

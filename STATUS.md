@@ -28,7 +28,8 @@ Release candidate: `v0.2.3`
 - Desktop and CLI confirmation is bound to a canonical plan digest carried by
   one request/response protocol, with fixed per-request output locations,
   ordinary-user-owned response files, and reparse-point-safe elevated writes.
-- CLI concurrency uses live PID ownership and token-checked cleanup. Generated
+- CLI concurrency uses an exclusive-create PID lock with stale-PID recovery.
+  Generated
   PowerShell/POSIX commands are parser-tested, and Unix commands are also
   ShellChecked in CI.
 - Downloads are HTTPS-only, release notes are resolved from the pushed tag,

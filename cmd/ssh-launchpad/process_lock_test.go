@@ -1,12 +1,11 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func TestProcessLockBlocksLiveOwnerAndCanBeReacquired(t *testing.T) {
@@ -28,15 +27,8 @@ func TestProcessLockBlocksLiveOwnerAndCanBeReacquired(t *testing.T) {
 
 func TestProcessLockRecoversDeadOwner(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "interactive.lock")
-	record, err := json.Marshal(processLockRecord{
-		PID:     int(^uint32(0) >> 1),
-		Token:   "stale",
-		Created: time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, append(record, '\n'), 0o600); err != nil {
+	deadPID := int(^uint32(0) >> 1)
+	if err := os.WriteFile(path, []byte(fmt.Sprintf("%d\n", deadPID)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	release, err := acquireProcessLockAt(path)
@@ -46,25 +38,12 @@ func TestProcessLockRecoversDeadOwner(t *testing.T) {
 	release()
 }
 
-func TestProcessLockCleanupDoesNotDeleteReplacement(t *testing.T) {
+func TestProcessLockRejectsUnreadableLockPath(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "interactive.lock")
-	release, err := acquireProcessLockAt(path)
-	if err != nil {
+	if err := os.Mkdir(path, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	replacement := []byte("{\"pid\":1,\"token\":\"replacement\"}\n")
-	if err := os.WriteFile(path, replacement, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	release()
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("replacement lock was deleted: %v", err)
-	}
-	if string(got) != string(replacement) {
-		t.Fatalf("replacement lock was changed: %q", got)
+	if _, err := acquireProcessLockAt(path); err == nil || errors.Is(err, errProcessLockHeld) {
+		t.Fatalf("directory at lock path must surface an error, got: %v", err)
 	}
 }
