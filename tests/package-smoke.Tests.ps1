@@ -44,3 +44,38 @@ Describe 'Portable package manifest layout' {
             Should -BeNullOrEmpty
     }
 }
+
+Describe 'Portable tar executable layout' {
+    It 'accepts executable files in a flat archive' {
+        $listing = @(
+            '-rwxr-xr-x  0 root root 123 2026-07-29 10:00 ssh-launchpad'
+            '-rwxr-xr-x  0 root root 456 2026-07-29 10:00 Start SSH Launchpad.command'
+        )
+
+        Test-TarListingExecutable -Listing $listing -RelativePath 'ssh-launchpad' |
+            Should -BeTrue
+        Test-TarListingExecutable -Listing $listing -RelativePath 'Start SSH Launchpad.command' |
+            Should -BeTrue
+    }
+
+    It 'accepts executable files beneath a bundle root directory' {
+        $listing = @(
+            '-rwxr-xr-x  0 runner runner 123 2026-07-29 10:00 SSH-Launchpad_0.2.3_Linux_x64_Portable/ssh-launchpad'
+            '-rwxr-xr-x  0 runner runner 456 2026-07-29 10:00 SSH-Launchpad_0.2.3_macOS_x64_Portable/Start SSH Launchpad.command'
+        )
+
+        Test-TarListingExecutable -Listing $listing -RelativePath 'ssh-launchpad' |
+            Should -BeTrue
+        Test-TarListingExecutable -Listing $listing -RelativePath 'Start SSH Launchpad.command' |
+            Should -BeTrue
+    }
+
+    It 'rejects a non-executable target' {
+        $listing = @(
+            '-rw-r--r--  0 runner runner 123 2026-07-29 10:00 bundle/ssh-launchpad'
+        )
+
+        Test-TarListingExecutable -Listing $listing -RelativePath 'ssh-launchpad' |
+            Should -BeFalse
+    }
+}
