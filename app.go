@@ -211,6 +211,7 @@ func (a *App) DismissElevatedJob(id string) {
 }
 
 func (a *App) runUACJob(record *elevatedJobRecord, executable, requestPath, digest string) {
+	defer os.Remove(requestPath)
 	err := launchElevatedHelper(context.Background(), executable, requestPath, digest)
 	finalizeUACJob(record, err)
 }

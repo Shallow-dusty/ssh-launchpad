@@ -26,7 +26,8 @@
 | Firewall uncertainty is mistaken for safety | unknown/disabled providers and extra source scopes are Plan blockers |
 | Uninstall removes unrelated files | fixed install directory; uninstaller deletes only owned files and removes the directory only when empty |
 | Log leaks device details | local reports use restrictive permissions; artifacts are excluded from releases |
-| Tailscale auth key leaks through plans, journals, exports, or reports | the reviewable plan carries only a marker command and the key is materialized inside Apply; action output and support reports redact `tskey-auth-` values; profile YAML exports strip the field |
+| Tailscale auth key leaks through plans, journals, exports, or reports | the reviewable plan carries only a marker command; exact-key plus format-aware redaction covers action output, errors, journals, and reports; profile YAML exports strip the field |
+| Elevation leaves a serialized auth key behind | the integrity-checked request is current-user-only, consumed and deleted by the helper before Apply, removed by the parent after cancellation/completion, and covered by stale-job cleanup after abnormal termination |
 | A shared personal card leaks the optional auth key | the key is optional, one-time keys are recommended, and the UI and README instruct treating the card as a credential file sent only to devices the user intends to control |
 
 Support-report redaction is heuristic, not a cryptographic guarantee. Review a
@@ -40,6 +41,12 @@ Two accepted trade-offs: the key briefly appears in the child process argv
 while `tailscale up` runs (use one-time or short-lived keys), and joining the
 tailnet is intentionally irreversible by rollback — leaving a network is an
 account-level decision, and joining on its own does not expose SSH.
+
+An elevated Apply necessarily transfers the profile across the privilege
+boundary. The auth key therefore exists briefly in an access-restricted,
+integrity-checked request file before the helper consumes it. A hard process or
+machine crash can leave that file until the next stale-job cleanup; use
+one-time or short-lived keys and revoke any key whose workflow was interrupted.
 
 ## Current out of scope
 

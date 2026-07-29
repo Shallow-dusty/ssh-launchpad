@@ -43,6 +43,32 @@ func TestRequestDigestRejectsTampering(t *testing.T) {
 	}
 }
 
+func TestConsumeRequestRemovesCredentialBearingFile(t *testing.T) {
+	directory := t.TempDir()
+	responsePath := filepath.Join(directory, "response.json")
+	if err := PrecreateFile(responsePath); err != nil {
+		t.Fatal(err)
+	}
+	profile := launchpad.DefaultProfile()
+	profile.Transport.AuthKey = "tskey-" + "auth-example-once"
+	request := NewRequest(profile, confirmedApplyOptions(), responsePath, "", "en")
+	path := filepath.Join(directory, "request.json")
+	digest, err := WriteRequest(path, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumed, err := ConsumeRequest(path, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if consumed.Profile.Transport.AuthKey != profile.Transport.AuthKey {
+		t.Fatal("consumed request lost the auth key before Apply")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("credential-bearing request still exists after verification: %v", err)
+	}
+}
+
 func TestElevationRequestRequiresReviewedPlanDigest(t *testing.T) {
 	directory := t.TempDir()
 	responsePath := filepath.Join(directory, "response.json")

@@ -7,12 +7,12 @@ import (
 )
 
 var (
-	ipv4Pattern        = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
-	ipv6Pattern        = regexp.MustCompile(`(?i)(?:\b[0-9a-f]{1,4}:){2,}[0-9a-f:]*\b`)
-	windowsUserPattern = regexp.MustCompile(`(?i)\b[A-Z]:\\Users\\[^\\\s"]+`)
-	unixHomePattern    = regexp.MustCompile(`/(?:Users|home)/[^/\s"]+`)
+	ipv4Pattern         = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
+	ipv6Pattern         = regexp.MustCompile(`(?i)(?:\b[0-9a-f]{1,4}:){2,}[0-9a-f:]*\b`)
+	windowsUserPattern  = regexp.MustCompile(`(?i)\b[A-Z]:\\Users\\[^\\\s"]+`)
+	unixHomePattern     = regexp.MustCompile(`/(?:Users|home)/[^/\s"]+`)
 	tokenPattern        = regexp.MustCompile(`(?i)\b(token|cookie|authkey|authorization|password|passwd|secret|credential)\s*[:=]\s*[^\s,;"]+`)
-	tailscaleKeyPattern = regexp.MustCompile(`(?i)\btskey-auth-[A-Za-z0-9_-]+`)
+	tailscaleKeyPattern = regexp.MustCompile(`(?i)\btskey-auth-[A-Za-z0-9_+/=-]+`)
 	keyCommentPattern   = regexp.MustCompile(`(?m)((?:ssh-[^\s]+|ecdsa-[^\s]+|sk-[^\s]+)\s+[A-Za-z0-9+/=]+)(?:\s+[^\r\n]+)`)
 )
 
@@ -90,4 +90,11 @@ func redactText(text string) string {
 		return "<redacted-private-key-material>"
 	}
 	return text
+}
+
+func redactCredentialText(text, credential string) string {
+	if credential = strings.TrimSpace(credential); credential != "" {
+		text = strings.ReplaceAll(text, credential, "<redacted-tailscale-auth-key>")
+	}
+	return redactText(text)
 }

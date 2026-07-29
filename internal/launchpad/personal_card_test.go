@@ -85,3 +85,25 @@ func TestLoadPersonalCardToleratesUnknownFieldsButRejectsTrailingJSON(t *testing
 		t.Fatal("card with trailing JSON was accepted")
 	}
 }
+
+func TestLoadPersonalCardRejectsPrivateKeyMaterialInUnknownFields(t *testing.T) {
+	profile := DefaultProfile()
+	profile.SSH.PublicKeys = []string{personalCardTestKey}
+	data, err := MarshalPersonalCard(NewPersonalCard(profile, "Personal", "Controller", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	withPrivateKey := bytes.Replace(
+		data,
+		[]byte(`"displayName": "Personal"`),
+		[]byte(`"displayName": "Personal", "futureCredential": "-----BEGIN OPENSSH PRIVATE KEY-----"`),
+		1,
+	)
+	path := filepath.Join(t.TempDir(), "unsafe.sshlaunchpad-card")
+	if err := os.WriteFile(path, withPrivateKey, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadPersonalCard(path); err == nil || !strings.Contains(err.Error(), "private-key material") {
+		t.Fatalf("private key hidden in an unknown field was accepted: %v", err)
+	}
+}

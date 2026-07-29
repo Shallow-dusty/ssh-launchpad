@@ -2,7 +2,7 @@
 
 All notable changes are documented here.
 
-## [Unreleased]
+## [0.2.4] - 2026-07-30
 
 ### Added
 
@@ -17,9 +17,10 @@ All notable changes are documented here.
   single Apply installs (if requested), joins the tailnet, and continues with
   SSH and firewall changes. Without a key the phased setup is unchanged.
 - The auth key never appears in the reviewable plan, journal, exported YAML
-  profiles, or support reports; captured action output is redacted. The
-  trade-offs (argv visibility during `tailscale up`, irreversible tailnet
-  join) are documented in `docs/threat-model.md`.
+  profiles, or support reports; exact-key and wrapped-key redaction covers
+  output and failure paths. Elevation consumes its restricted request file
+  before Apply. The remaining crash-residue, argv-visibility, and irreversible
+  tailnet-join trade-offs are documented in `docs/threat-model.md`.
 
 ## [0.2.3] - 2026-07-29
 
@@ -36,8 +37,8 @@ All notable changes are documented here.
 - Make Windows SSH configuration win before existing directives and `Match`
   blocks, with validation and immediate backup restoration on failure.
 - Treat blockers, manual-only actions, journal read/setup/persistence failures,
-  invalid SSH authentication evidence, disabled/unknown firewalls, and extra
-  firewall scopes as incomplete work instead of successful Apply or Verify.
+  invalid SSH evidence, disabled or unknown firewalls, and extra firewall
+  scopes as incomplete work instead of successful Apply or Verify.
 - Harden CLI UAC argument quoting and cancellation classification, scheduled
   task UTF-16 encoding, report redaction, archive extraction, release-version
   paths, offline-pack symlinks, and installer directory deletion boundaries.

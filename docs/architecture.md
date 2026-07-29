@@ -30,13 +30,16 @@ Secrets follow the same immutability rule. When a profile carries a
 argv, so the reviewable plan and the journal never contain the key; the
 executor materializes the marker into the real `tailscale up` command only
 inside Apply. The plan digest still binds the key because the digest covers
-the whole profile.
+the whole profile. When Windows UAC or CLI elevation is required, the
+credential crosses the privilege boundary in the integrity-checked,
+current-user-only request file. The helper consumes and deletes that file
+before Apply; cancellation and normal parent cleanup also remove it.
 
 `internal/elevation` owns the single versioned GUI/CLI privilege boundary.
 The standard-user process writes and hashes an immutable request and
 pre-creates fixed response/event files. The elevated helper verifies the
-digest and same-directory paths, refuses reparse-point output targets, and
-writes only those existing files.
+digest and same-directory paths, consumes the request, refuses reparse-point
+output targets, and writes only those existing files.
 
 ## Platform boundaries
 

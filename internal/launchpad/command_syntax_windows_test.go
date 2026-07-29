@@ -10,7 +10,15 @@ import (
 )
 
 func TestGeneratedWindowsPowerShellParses(t *testing.T) {
-	for _, action := range generatedSyntaxTestActions(t, PlatformWindows) {
+	actions := generatedSyntaxTestActions(t, PlatformWindows)
+	profile := DefaultProfile()
+	profile.Transport.AuthKey = "tskey-auth-example''quoted"
+	materialized, err := materializeActionCommand(authenticateTailscaleAction(Snapshot{Platform: PlatformWindows}), profile, PlatformWindows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions = append(actions, Action{ID: "authenticate-tailscale-materialized", Command: materialized})
+	for _, action := range actions {
 		for _, command := range [][]string{action.Command, action.RollbackCommand} {
 			script, ok := powerShellScript(command)
 			if !ok {

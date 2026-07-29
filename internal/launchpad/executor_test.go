@@ -18,6 +18,7 @@ import (
 type recordingRunner struct {
 	commands [][]string
 	failAt   int
+	failure  error
 }
 
 type artifactRunner struct {
@@ -45,6 +46,9 @@ func (r *recordingRunner) Run(_ context.Context, command []string, output io.Wri
 	r.commands = append(r.commands, append([]string(nil), command...))
 	_, _ = io.WriteString(output, "ran "+strings.Join(command, " "))
 	if r.failAt > 0 && len(r.commands) == r.failAt {
+		if r.failure != nil {
+			return r.failure
+		}
 		return errors.New("injected failure")
 	}
 	return nil
@@ -263,5 +267,44 @@ func TestTailscaleAuthKeyIsMaterializedOnlyForExecutionAndRedactedFromReport(t *
 	}
 	if report.Plan.Actions[0].Command[0] != tailscaleAuthCommandMarker {
 		t.Fatalf("inspectable plan should retain only the marker: %#v", report.Plan.Actions[0].Command)
+	}
+}
+
+func TestTailscaleAuthKeyIsRedactedFromFailureAndJournal(t *testing.T) {
+	profile := DefaultProfile()
+	profile.Transport.AuthKey = "tskey-" + "auth-example--wrapped/credential+tail=="
+	runner := &recordingRunner{
+		failAt:  1,
+		failure: errors.New("tailscale rejected " + profile.Transport.AuthKey),
+	}
+	executor := Executor{
+		Runner:             runner,
+		AdministratorCheck: func(context.Context, Platform) bool { return true },
+	}
+	plan := Plan{
+		Platform: PlatformLinux,
+		Actions: []Action{{
+			ID:                "authenticate-tailscale",
+			Operation:         "authenticate_tailscale",
+			Mutating:          true,
+			RequiresElevation: true,
+			Command:           []string{tailscaleAuthCommandMarker},
+		}},
+	}
+	report, err := executor.Apply(context.Background(), profile, plan, ApplyOptions{Confirmed: true, JournalDir: t.TempDir()})
+	if err == nil || report.Success {
+		t.Fatalf("expected authentication failure: %+v %v", report, err)
+	}
+	for _, value := range []string{report.Error, err.Error(), report.Results[0].Error, report.Results[0].Output} {
+		if strings.Contains(value, profile.Transport.AuthKey) {
+			t.Fatalf("auth key leaked through failed Apply: %q", value)
+		}
+	}
+	journal, readErr := os.ReadFile(report.JournalPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if strings.Contains(string(journal), profile.Transport.AuthKey) {
+		t.Fatalf("auth key leaked into journal: %s", journal)
 	}
 }

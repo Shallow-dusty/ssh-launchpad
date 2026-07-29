@@ -1,10 +1,12 @@
 # Status
 
-Last locally verified: 2026-07-29
+Last locally verified: 2026-07-30
 
 Current release: [`v0.2.3`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.3)
 
-## Unreleased toward v0.2.4
+Release candidate: `v0.2.4`
+
+## v0.2.4 release candidate
 
 - Personal cards (`.sshlaunchpad-card`) carry controller public keys, SSH
   port, display labels, network mode, and an optional Tailscale auth key from
@@ -13,9 +15,14 @@ Current release: [`v0.2.3`](https://github.com/Shallow-dusty/ssh-launchpad/relea
 - `transport.authKey` enables one-pass unattended Tailnet bootstrap; the key
   is materialized only inside Apply and redacted from plans, journals,
   reports, and exported profiles (see `docs/threat-model.md`).
-- Validation so far: Go unit/race/vet, Windows/macOS cross-compilation,
-  frontend typecheck/build, and 13 browser scenarios. Windows-native checks
-  (Pester, Wails/NSIS, upgrade smoke) remain open before any v0.2.4 tag.
+- The elevation helper consumes its credential-bearing request before Apply;
+  cancellation also removes it. Exact-key and wrapped-key redaction now covers
+  command output, failure text, journals, and reports.
+- Local candidate validation covers Go unit/race/vet and security checks,
+  Windows/macOS cross-compilation, Windows PowerShell 5.1 and PowerShell 7
+  Pester, frontend typecheck/build and 13 browser scenarios, Wails/NSIS, a
+  v0.2.3-to-v0.2.4 installer upgrade/uninstall smoke, release packages,
+  checksums, SBOM, and secret scans.
 
 ## Current product
 

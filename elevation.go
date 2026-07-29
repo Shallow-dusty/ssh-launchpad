@@ -79,7 +79,7 @@ func runElevatedHelper(args []string) int {
 	if err != nil {
 		return launchpad.ExitInvalidProfile
 	}
-	request, err := elevationprotocol.VerifyRequest(requestPath, digest)
+	request, err := elevationprotocol.ConsumeRequest(requestPath, digest)
 	if err != nil {
 		return launchpad.ExitInvalidProfile
 	}

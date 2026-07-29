@@ -131,6 +131,9 @@ func LoadPersonalCard(path string) (PersonalCard, error) {
 	if len(data) > maxPersonalCardBytes {
 		return PersonalCard{}, errors.New("personal card must not exceed 1 MiB")
 	}
+	if strings.Contains(strings.ToUpper(string(data)), "PRIVATE KEY") {
+		return PersonalCard{}, errors.New("personal card contains private-key material")
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	// Unknown fields are tolerated on purpose: a card written by a newer
 	// version must stay importable here. Validation below still constrains

@@ -7,7 +7,7 @@ const (
 	ControllerKeyBaseName = "id_ed25519_ssh_launchpad"
 )
 
-var Version = "0.2.3"
+var Version = "0.2.4"
 
 type Stage string
 
@@ -68,7 +68,8 @@ type TransportProfile struct {
 	Install bool   `json:"install" yaml:"install"`
 	// AuthKey optionally joins the tailnet unattended during Apply. It is a
 	// secret: it never appears in plans, journals, reports, or exported
-	// profiles. See docs/threat-model.md.
+	// profiles, and an elevation request is consumed before Apply. See
+	// docs/threat-model.md.
 	AuthKey string `json:"authKey,omitempty" yaml:"authKey,omitempty"`
 }
 

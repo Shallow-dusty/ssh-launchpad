@@ -113,6 +113,21 @@ func VerifyRequest(path, expectedDigest string) (Request, error) {
 	return request, nil
 }
 
+// ConsumeRequest verifies an immutable elevation request and removes the
+// request file before returning its in-memory contents. Profiles may contain
+// short-lived credentials, so a helper must not leave the serialized request
+// on disk for the duration of Apply.
+func ConsumeRequest(path, expectedDigest string) (Request, error) {
+	request, err := VerifyRequest(path, expectedDigest)
+	if err != nil {
+		return Request{}, err
+	}
+	if err := os.Remove(path); err != nil {
+		return Request{}, fmt.Errorf("remove verified elevation request: %w", err)
+	}
+	return request, nil
+}
+
 func validateRequest(request Request) error {
 	if request.SchemaVersion != SchemaVersion {
 		return fmt.Errorf("unsupported elevation request schema %d", request.SchemaVersion)

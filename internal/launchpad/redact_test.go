@@ -37,3 +37,11 @@ func TestRedactTextRemovesBareTailscaleAuthKey(t *testing.T) {
 		t.Fatalf("bare Tailscale auth key was not redacted: %s", got)
 	}
 }
+
+func TestRedactTextRemovesWrappedTailscaleAuthKey(t *testing.T) {
+	const key = "tskey-" + "auth-k7UagY1CNTRL-ZZZZZ--TLpAEDA1ggnXuw4/fWnNWUwcoOjLemhOvml1juMl5lhLmY5sBUsj8EWEAfL2g=="
+	got := redactText("tailscale up --auth-key=" + key)
+	if strings.Contains(got, key) || strings.Contains(got, "TLpAEDA1") {
+		t.Fatalf("wrapped Tailscale auth key was only partially redacted: %s", got)
+	}
+}

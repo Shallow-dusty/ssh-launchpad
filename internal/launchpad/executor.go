@@ -156,15 +156,19 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 		}
 		result.Output = buffer.String()
 		if action.Operation == "authenticate_tailscale" {
-			result.Output = redactText(result.Output)
+			result.Output = redactCredentialText(result.Output, profile.Transport.AuthKey)
 		}
 		result.Finished = time.Now().UTC()
 		if err != nil {
 			result.Status = "failed"
-			result.Error = err.Error()
+			executionError := err.Error()
+			if action.Operation == "authenticate_tailscale" {
+				executionError = redactCredentialText(executionError, profile.Transport.AuthKey)
+			}
+			result.Error = executionError
 			report.Results = append(report.Results, result)
-			e.emit(StageApply, action.ID, "error", err.Error(), &report)
-			return e.failAndRollback(ctx, profile, report, journal, journalPath, completed, opts, err)
+			e.emit(StageApply, action.ID, "error", executionError, &report)
+			return e.failAndRollback(ctx, profile, report, journal, journalPath, completed, opts, errors.New(executionError))
 		}
 		result.Status = map[bool]string{true: "scheduled", false: "completed"}[action.SelfCutRisk && opts.ScheduleRisky]
 		report.Results = append(report.Results, result)
