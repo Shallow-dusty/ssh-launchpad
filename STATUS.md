@@ -2,11 +2,9 @@
 
 Last locally verified: 2026-07-30
 
-Current release: [`v0.2.3`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.3)
+Current release: [`v0.2.4`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.4)
 
-Release candidate: `v0.2.4`
-
-## v0.2.4 release candidate
+## v0.2.4
 
 - Personal cards (`.sshlaunchpad-card`) carry controller public keys, SSH
   port, display labels, network mode, and an optional Tailscale auth key from
