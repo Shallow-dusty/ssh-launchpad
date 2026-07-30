@@ -36,7 +36,6 @@
   builders, bounded uninstall, report redaction, and patched Go toolchain.
 - Shared GUI/CLI elevation protocol, safe privileged output handling, live-PID
   concurrency locks, generated-command parser tests, and HTTPS-only downloads.
-- Minimum disposable Windows VM Apply/Verify/Rollback evidence before release.
 - Tag-derived release notes and a modularized frontend with transport-aware
   health counting.
 
@@ -52,9 +51,8 @@
 
 ## v0.3.0 candidates
 
-- Expanded Windows Sandbox/VM interrupted servicing, repeat Apply, cleanup, and
-  uninstall-state matrix.
-- Disposable Ubuntu and macOS Apply/rollback validation.
+- Real-target validation in disposable VMs (Apply/Verify/Rollback, repeat
+  Apply, upgrade, uninstall) on Windows, Ubuntu, and macOS.
 - Controller-side real TCP, SSH handshake, authentication, identity, and host
   fingerprint pairing assistant.
 - Automatic multi-component offline-pack selection.

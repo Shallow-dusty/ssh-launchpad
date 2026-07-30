@@ -1,34 +1,26 @@
 # Repository working agreement
 
-SSH Launchpad is the single source for reusable SSH bootstrap, planning, apply,
-verification, and recovery logic.
+Personal project: a beginner-first Chinese/English wizard that sets up SSH
+remote access (GUI + CLI). It modifies sshd, firewall rules, and
+authorized_keys on real machines, so the rules below are product safety
+contracts, not process theater.
 
-## Boundaries
+## Safety contracts
 
-- Never commit private keys, authentication tokens, real device profiles,
-  exported logs, or host identities.
-- `check` and `plan` are read-only. `verify` must never request elevation.
-- Do not weaken TLS verification or execute downloaded script text.
-- A change that may interrupt the active SSH or Tailscale path must be blocked
-  by default and must have a rollback journal plus an external verification
-  path before it can be scheduled.
-- Platform-specific repositories should consume the shared engine instead of
-  vendoring it, so safety fixes remain centrally auditable. They may keep
-  private profiles or evidence locally. This is a contribution and maintenance
-  guideline, not an additional license restriction; downstream use remains
-  governed by the MIT license.
+- Never commit private keys, tokens, real device profiles, exported logs, or
+  host identities.
+- `check` and `plan` are read-only; `verify` never requests elevation.
+- Never weaken TLS verification or execute downloaded script text; downloads
+  require HTTPS + SHA-256.
+- A change that could cut the active SSH/Tailscale path is blocked by default
+  and needs a rollback journal plus an external verification path.
 
-## Development flow
+## Development
 
-1. Read `README.md`, `STATUS.md`, and the relevant document under `docs/`.
-   Read `CHRONICLE.md` only when tracing origin, promotion, or past decisions.
-2. Run `git status --short --branch` before editing.
-3. Keep platform commands behind planner and executor interfaces.
-4. Add tests for planner output, repeat Apply, partial failure, rollback, and
-   download verification when changing those behaviors.
-5. Before release, run the checks in `docs/release-verification.md`, inspect the
-   artifact contents, scan for secrets and device identity, and update
-   `CHANGELOG.md`.
-
-Generated files belong under `build/`, `dist/`, or `frontend/test-results/`.
-Do not leave browser captures, reports, or local journals in the repository.
+- Read `STATUS.md` and the relevant `docs/` file before editing.
+- Keep platform commands behind the planner/executor interfaces; the UI never
+  assembles shell commands or decides safety policy.
+- When changing planner output, Apply, rollback, or download verification, add
+  or update the matching tests.
+- Generated files go under `build/`, `dist/`, or `frontend/test-results/`.
+  Don't leave browser captures, reports, or local journals in the repo.

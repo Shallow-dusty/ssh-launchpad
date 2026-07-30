@@ -23,9 +23,8 @@ are applied:
 pwsh -NoProfile -File scripts/build-windows-installer.ps1 -Version 0.2.3
 ```
 
-No integration test may change SSH, Tailscale, RDP, or firewall state on a
-personal or production host. Use mocks, generated commands, disposable VMs,
-Windows Sandbox, and native CI runners.
+Never run tests that change SSH, Tailscale, RDP, or firewall state on a real
+host; cover those paths with mocks and generated-command tests.
 
 Release packaging is owned by `scripts/package-release.ps1` and
 `.github/workflows/release.yml`. Portable artifacts contain compiled binaries

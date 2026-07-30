@@ -94,7 +94,6 @@ open `Start SSH Launchpad.cmd`. The language switch is always available and pers
 
 - [当前状态](STATUS.md)
 - [版本变化](CHANGELOG.md)
-- [项目编年史](CHRONICLE.md)
 - [平台支持与验证边界](docs/platform-support.md)
 - [架构](docs/architecture.md)
 - [网络与下载策略](docs/network-download-strategy.md)
@@ -102,8 +101,6 @@ open `Start SSH Launchpad.cmd`. The language switch is always available and pers
 - [威胁模型](docs/threat-model.md)
 - [故障排查与恢复](docs/troubleshooting.md)
 - [开发与构建](docs/development.md)
-- [Release 验证](docs/release-verification.md)
-- [v0.2.3 安全审计与发布门禁](docs/v0.2.3-security-audit.md)
 - [安全策略](SECURITY.md)
 
 MIT License。

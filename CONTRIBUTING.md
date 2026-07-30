@@ -11,6 +11,6 @@ Changes should:
 - avoid real host data in fixtures;
 - document platform-specific verification limits.
 
-Run the checks in `docs/release-verification.md`. Commit messages and public
-discussion should describe the problem, implementation, and objective test
-evidence.
+Before tagging a release, run the checklist in
+`docs/release-verification.md`. Commit messages and public discussion should
+describe the problem, implementation, and objective test evidence.

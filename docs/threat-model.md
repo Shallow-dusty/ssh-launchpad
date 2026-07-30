@@ -48,3 +48,19 @@ account-level decision, and joining on its own does not expose SSH.
 - Replacing endpoint security, MDM, or enterprise firewall policy.
 - Guaranteeing availability when no independent recovery path exists.
 - Code signing and macOS notarization.
+
+## Deliberate simplifications
+
+Three mechanisms were reviewed as over-engineered for this threat model and
+simplified after the v0.2.3 hardening (the full-hardening implementation is
+preserved on the `archive/v0.2.3-full-hardening` branch). Do not re-add them
+without a concrete threat:
+
+- Effective-SSH probing uses a single global `sshd -T` dump instead of a
+  per-connection `sshd -T -C` matrix; `Match`-dependent policy fails closed as
+  unchecked (see `docs/platform-support.md`).
+- The Windows rollback journal drops the owner-SID check; reparse-point and
+  directory rejection remains, matching the unix `O_NOFOLLOW` checks.
+- The interactive process lock is an exclusive-create PID file with stale-PID
+  recovery instead of random tokens and compare-before-delete; the residual
+  unlock race is accepted as harmless.
