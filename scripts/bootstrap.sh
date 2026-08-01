@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-VERSION="${SSH_LAUNCHPAD_VERSION:-0.2.4}"
+VERSION="${SSH_LAUNCHPAD_VERSION:-0.2.5}"
 INSTALL_DIR="${SSH_LAUNCHPAD_INSTALL_DIR:-$HOME/.local/bin}"
 STRATEGY="${SSH_LAUNCHPAD_DOWNLOAD_STRATEGY:-official}"
 BASE_URL="${SSH_LAUNCHPAD_BASE_URL:-https://github.com/Shallow-dusty/ssh-launchpad/releases/download}"

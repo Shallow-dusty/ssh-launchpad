@@ -2,7 +2,7 @@
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [ValidatePattern('^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?$')]
-    [string]$Version = '0.2.4',
+    [string]$Version = '0.2.5',
     [string]$InstallDirectory = (Join-Path $env:LOCALAPPDATA 'SSH-Launchpad\bin'),
     [ValidateSet('Official', 'Mirror', 'Proxy', 'Offline', 'Cache')]
     [string]$DownloadStrategy = 'Official',
@@ -159,7 +159,7 @@ $tag = "v$Version"
 $cliAsset = "SSH-Launchpad_${Version}_Windows_${assetArchitecture}_Portable.zip"
 $desktopAsset = "SSH-Launchpad_${Version}_Windows_x64_Installer_UNSIGNED.exe"
 if ($Desktop -and $architecture -ne 'amd64') {
-    throw (Get-Text 'v0.2.4 暂未提供 Windows ARM64 GUI 安装器，请使用 portable CLI。' 'v0.2.4 does not provide a Windows ARM64 GUI installer; use the portable CLI.')
+    throw (Get-Text 'v0.2.5 暂未提供 Windows ARM64 GUI 安装器，请使用 portable CLI。' 'v0.2.5 does not provide a Windows ARM64 GUI installer; use the portable CLI.')
 }
 $assetName = if ($Desktop) { $desktopAsset } else { $cliAsset }
 $archivePath = Join-Path $CacheDirectory $assetName

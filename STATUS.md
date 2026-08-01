@@ -1,10 +1,12 @@
 # Status
 
-Last locally verified: 2026-07-30
+Last locally verified: 2026-08-01
 
 Current release: [`v0.2.4`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.4)
 
-## Unreleased toward v0.2.5
+Release candidate: `v0.2.5`
+
+## v0.2.5 release candidate
 
 - Desktop wizard rebuilt around user tasks (check → review → finish; repair
   mode: diagnose → repair → verify) following the deep audit in
@@ -14,6 +16,11 @@ Current release: [`v0.2.4`](https://github.com/Shallow-dusty/ssh-launchpad/relea
   Lucide icons. Safety simplifications: rollback-journal digest mismatch
   downgraded to a warning; the GUI's third pre-elevation Probe+Plan removed
   (digest check stays authoritative inside Apply).
+- Local candidate validation covers Go unit/race/vet, staticcheck,
+  govulncheck, gosec, shellcheck, and gitleaks, Windows/macOS
+  cross-compilation, frontend typecheck/build, and 14 browser scenarios.
+  Windows-native checks (Pester, Wails/NSIS installer, v0.2.4-to-v0.2.5
+  upgrade smoke) run in release CI on a Windows runner.
 
 ## v0.2.4
 

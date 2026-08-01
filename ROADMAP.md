@@ -49,6 +49,20 @@
   trade-offs are documented in the threat model.
 - Without a card or auth key, the phased sign-in flow is unchanged.
 
+## v0.2.5 — deep audit and task-based wizard
+
+- Rebuilt the desktop wizard around user tasks (check → review → finish;
+  repair mode: diagnose → repair → verify) instead of engine stages, with a
+  self-driving plan step, preselected controller keys, consequence-labelled
+  network exposure, concrete check-issue lists, and persistent error states.
+- Restrained the visual system (12px radii, solid surfaces, a single type
+  scale, solid accent buttons) and vendored Lucide icons.
+- Applied advanced settings live; rollback confirmation moved to an in-app
+  dialog.
+- Downgraded the rollback-journal digest mismatch to a warning and removed
+  the GUI's third pre-elevation Probe+Plan (authoritative digest check stays
+  inside Apply), following `docs/design-audit-2026-08.md`.
+
 ## v0.3.0 candidates
 
 - Real-target validation in disposable VMs (Apply/Verify/Rollback, repeat

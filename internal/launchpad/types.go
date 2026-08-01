@@ -7,7 +7,7 @@ const (
 	ControllerKeyBaseName = "id_ed25519_ssh_launchpad"
 )
 
-var Version = "0.2.4"
+var Version = "0.2.5"
 
 type Stage string
 
