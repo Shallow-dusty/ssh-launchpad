@@ -191,6 +191,9 @@ export const messages = {
     actionCount: "{count} 个项目",
     version: `v${APP_VERSION}`,
     errorGeneric: "操作没有完成。电脑没有被继续修改。",
+    errorDownload: "下载文件校验失败，没有执行安装。请重试或改用已验证的离线包。",
+    errorSelfCut: "检测到可能切断当前远程连接的操作，已按安全默认值阻止。",
+    errorPlanChanged: "确认后电脑状态发生变化，方案已失效。请返回重新生成方案。",
     noTelemetry: "默认不收集遥测或使用数据。"
   },
   en: {
@@ -381,6 +384,9 @@ export const messages = {
     actionCount: "{count} items",
     version: `v${APP_VERSION}`,
     errorGeneric: "The operation did not finish. No further changes were made.",
+    errorDownload: "Download verification failed. Nothing was installed; retry or use a verified offline bundle.",
+    errorSelfCut: "A change that could cut the current remote connection was blocked by the safety default.",
+    errorPlanChanged: "The computer state changed after review, so the plan expired. Go back and rebuild it.",
     noTelemetry: "No telemetry or usage data is collected by default."
   }
 } as const;

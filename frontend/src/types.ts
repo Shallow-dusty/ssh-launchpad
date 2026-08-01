@@ -106,6 +106,8 @@ export interface DesktopRequest {
   allowSelfCut: boolean;
   scheduleRisky: boolean;
   externalVerify: string;
+  planNoChanges?: boolean;
+  planNeedsElevation?: boolean;
 }
 
 export interface PublicKeyInfo {

@@ -18,7 +18,7 @@
 | Secret committed to a profile | validation rejects private-key material; release scan and package smoke |
 | Accidental public exposure | tailnet-only default; explicit LAN/custom CIDRs; port and scope plan |
 | Lockout from restarting the only path | active transport detection, self-cut block, delayed action, external verify |
-| Partial Apply leaves a broken host | pre-change validation, integrity-digested journal, idempotent rollback, reversible actions, optional auto-rollback |
+| Partial Apply leaves a broken host | pre-change validation, journaled actions with a corruption-flagging digest (mismatch warns, never blocks recovery), idempotent rollback, reversible actions, optional auto-rollback |
 | Confirmed plan changes before Apply | canonical plan digest; changed profile, evidence, or commands require review and confirmation again |
 | UI bypasses safety policy | UI and CLI call the same engine; executor owns confirmation gates |
 | Read-only command escalates | Check/Plan/Verify never invoke elevation |
@@ -71,3 +71,10 @@ without a concrete threat:
 - The interactive process lock is an exclusive-create PID file with stale-PID
   recovery instead of random tokens and compare-before-delete; the residual
   unlock race is accepted as harmless.
+- The rollback journal digest is self-computed, so it only flags accidental
+  corruption; a mismatch warns and rollback continues instead of refusing the
+  recovery path over a checksum it could recompute.
+- The GUI no longer re-plans before elevation: the reviewed plan's no-change
+  and elevation flags act as routing hints, while the authoritative digest
+  check stays inside the engine's own re-plan in Apply, failing closed on
+  drift.

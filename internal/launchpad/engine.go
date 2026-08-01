@@ -3,9 +3,16 @@ package launchpad
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"time"
 )
+
+// CurrentProcessElevated reports whether this process already holds
+// administrative rights, without running a full system probe.
+func CurrentProcessElevated(ctx context.Context) bool {
+	return detectAdministrator(ctx, Platform(runtime.GOOS))
+}
 
 type Engine struct {
 	Probe    Probe

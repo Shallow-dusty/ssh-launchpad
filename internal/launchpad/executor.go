@@ -222,10 +222,11 @@ func (e Executor) Rollback(ctx context.Context, journalPath string) (Report, err
 	started := time.Now().UTC()
 	report := newReport(StageRollback, "", started)
 	report.JournalPath = journalPath
-	journal, err := readJournal(journalPath)
+	journal, warnings, err := readJournal(journalPath)
 	if err != nil {
 		return finishReportError(report, ExitInvalidProfile, fmt.Errorf("read rollback journal: %w", err))
 	}
+	report.Warnings = append(report.Warnings, warnings...)
 	report.ProfileName = journal.ProfileName
 	if journal.Status == "rolled-back" {
 		report.Success = true
@@ -536,41 +537,46 @@ func stageVerifiedActionArtifact(action Action, command []string, journalDir, re
 	return stagedCommand, cleanup, nil
 }
 
-func readJournal(path string) (Journal, error) {
+// readJournal loads a rollback journal. A digest mismatch is reported as a
+// warning rather than a hard failure: the digest is self-computed, so it can
+// only flag accidental corruption, and a recovery path must not refuse to
+// recover over a checksum it could recompute itself.
+func readJournal(path string) (Journal, []string, error) {
 	file, err := openJournalRead(path)
 	if err != nil {
-		return Journal{}, err
+		return Journal{}, nil, err
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return Journal{}, err
+		return Journal{}, nil, err
 	}
 	const maxJournalBytes = 8 * 1024 * 1024
 	if info.Size() > maxJournalBytes {
-		return Journal{}, errors.New("rollback journal exceeds the size limit")
+		return Journal{}, nil, errors.New("rollback journal exceeds the size limit")
 	}
 	data, err := io.ReadAll(io.LimitReader(file, maxJournalBytes+1))
 	if err != nil {
-		return Journal{}, err
+		return Journal{}, nil, err
 	}
 	if len(data) > maxJournalBytes {
-		return Journal{}, errors.New("rollback journal exceeds the size limit")
+		return Journal{}, nil, errors.New("rollback journal exceeds the size limit")
 	}
 	var journal Journal
 	if err := json.Unmarshal(data, &journal); err != nil {
-		return Journal{}, err
+		return Journal{}, nil, err
 	}
 	if journal.SchemaVersion != SchemaVersion {
-		return Journal{}, fmt.Errorf("unsupported journal schema %d", journal.SchemaVersion)
+		return Journal{}, nil, fmt.Errorf("unsupported journal schema %d", journal.SchemaVersion)
 	}
 	if strings.TrimSpace(journal.ID) == "" || len(journal.Actions) > 256 {
-		return Journal{}, errors.New("rollback journal has invalid identity or action count")
+		return Journal{}, nil, errors.New("rollback journal has invalid identity or action count")
 	}
+	var warnings []string
 	if journal.Digest != "" && !strings.EqualFold(journal.Digest, journalDigest(journal)) {
-		return Journal{}, errors.New("rollback journal integrity check failed")
+		warnings = append(warnings, "The rollback journal digest does not match its contents; continuing with best-effort recovery from the recorded actions.")
 	}
-	return journal, nil
+	return journal, warnings, nil
 }
 
 func journalDigest(journal Journal) string {

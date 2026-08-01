@@ -142,7 +142,10 @@ func TestJournalSetupAndReadFailuresNeverReturnSuccess(t *testing.T) {
 	}
 }
 
-func TestRollbackRejectsTamperedJournal(t *testing.T) {
+// A digest-mismatched journal no longer blocks rollback: the digest is
+// self-computed and only flags accidental corruption, so the recovery path
+// warns and continues instead of refusing to recover.
+func TestRollbackWarnsOnDigestMismatch(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "journal.json")
 	journal := Journal{SchemaVersion: SchemaVersion, ID: "tamper-test", Status: "completed"}
 	if err := writeJournalAtomic(path, &journal); err != nil {
@@ -157,8 +160,11 @@ func TestRollbackRejectsTamperedJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 	report, err := (Executor{}).Rollback(context.Background(), path)
-	if err == nil || report.ExitCode == ExitOK {
-		t.Fatalf("tampered journal was accepted: %+v %v", report, err)
+	if err != nil {
+		t.Fatalf("digest-mismatched journal was rejected: %v", err)
+	}
+	if len(report.Warnings) == 0 {
+		t.Fatalf("expected a digest-mismatch warning, got %+v", report)
 	}
 }
 

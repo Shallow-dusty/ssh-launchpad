@@ -402,14 +402,17 @@ async function beginSafeInstall(): Promise<void> {
   state.installError = "";
   state.progress = [];
   renderPage();
+  const plan = state.planReport?.plan;
   const request: DesktopRequest = {
     stage: "apply",
     profile: state.profile,
-    planDigest: state.planReport?.plan?.digest ?? "",
+    planDigest: plan?.digest ?? "",
     confirmed: true,
     allowSelfCut: false,
     scheduleRisky: false,
-    externalVerify: ""
+    externalVerify: "",
+    planNoChanges: plan?.noChanges ?? false,
+    planNeedsElevation: (plan?.actions ?? []).some((action) => action.mutating && action.requiresElevation)
   };
   try {
     if (window.go?.main?.App) {
@@ -466,7 +469,7 @@ function finishElevatedJob(job: ElevatedJob): void {
   }
   if (job.state === "failed" || !job.report?.success) {
     state.installState = "failed";
-    state.installError = job.error ?? job.report?.error ?? t("errorGeneric");
+    state.installError = friendlyReportError(job.error || job.report?.error || "", job.report);
     renderPage();
     return;
   }
@@ -906,6 +909,21 @@ function showToast(message: string): void {
     setTimeout(() => toast.classList.remove("show"), 2800);
   }
   announce(message);
+}
+
+// Stage reports carry a stable exit code, so known failure classes map to
+// guidance instead of fragile error-text matching.
+function friendlyReportError(raw: string, report?: Report): string {
+  switch (report?.exitCode) {
+    case 8:
+      return t("errorDownload");
+    case 6:
+      return t("errorSelfCut");
+    case 5:
+      return t("errorPlanChanged");
+    default:
+      return raw || t("errorGeneric");
+  }
 }
 
 function friendlyError(error: unknown): string {

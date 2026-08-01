@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +36,13 @@ type DesktopRequest struct {
 	AllowSelfCut   bool              `json:"allowSelfCut"`
 	ScheduleRisky  bool              `json:"scheduleRisky"`
 	ExternalVerify string            `json:"externalVerify"`
+	// PlanNoChanges and PlanNeedsElevation are routing hints taken from the
+	// plan the user just reviewed. They only select the execution path
+	// (direct vs elevated, apply vs no-op); the engine re-plans inside Apply
+	// and rejects the request if the digest no longer matches, so a stale
+	// or dishonest hint fails closed instead of changing the wrong thing.
+	PlanNoChanges      bool `json:"planNoChanges,omitempty"`
+	PlanNeedsElevation bool `json:"planNeedsElevation,omitempty"`
 }
 
 type PublicKeyInfo struct {
@@ -109,17 +118,13 @@ func (a *App) BeginElevatedApply(request DesktopRequest) (ElevatedJob, error) {
 	if err := request.Profile.Validate(); err != nil {
 		return ElevatedJob{}, err
 	}
-	planReport, err := a.engine.Plan(a.ctx, request.Profile)
-	if err != nil {
-		return ElevatedJob{}, err
+	// The authoritative digest check happens inside Apply's own re-plan;
+	// here we only need the digest to be well-formed so the elevated helper
+	// accepts the handoff.
+	if decoded, err := hex.DecodeString(strings.TrimSpace(request.PlanDigest)); err != nil || len(decoded) != sha256.Size {
+		return ElevatedJob{}, errors.New("safe install requires the digest of the reviewed plan")
 	}
-	if planReport.Plan == nil {
-		return ElevatedJob{}, errors.New("safe install could not produce a plan")
-	}
-	if strings.TrimSpace(request.PlanDigest) == "" || !strings.EqualFold(strings.TrimSpace(request.PlanDigest), planReport.Plan.Digest) {
-		return ElevatedJob{}, errors.New("the machine state or profile changed; review the new plan before safe install")
-	}
-	if planReport.Plan.NoChanges {
+	if request.PlanNoChanges {
 		report, applyErr := a.engine.Apply(a.ctx, request.Profile, desktopApplyOptions(request))
 		state := "failed"
 		if report.Success {
@@ -150,7 +155,7 @@ func (a *App) BeginElevatedApply(request DesktopRequest) (ElevatedJob, error) {
 	a.jobs[id] = record
 	a.mu.Unlock()
 
-	if runtime.GOOS == "windows" && planReport.Snapshot != nil && !planReport.Snapshot.IsAdministrator && planNeedsElevation(planReport.Plan) {
+	if runtime.GOOS == "windows" && request.PlanNeedsElevation && !launchpad.CurrentProcessElevated(a.ctx) {
 		for _, path := range []string{record.responsePath, record.eventsPath} {
 			if err := elevationprotocol.PrecreateFile(path); err != nil {
 				a.DismissElevatedJob(id)
@@ -522,15 +527,6 @@ func (a *App) ExportPairingFile(publicKey string) (string, error) {
 		return "", err
 	}
 	return path, os.WriteFile(path, []byte(publicKey+"\n"), 0o644)
-}
-
-func planNeedsElevation(plan *launchpad.Plan) bool {
-	for _, action := range plan.Actions {
-		if action.Mutating && action.RequiresElevation {
-			return true
-		}
-	}
-	return false
 }
 
 func errorText(err error) string {

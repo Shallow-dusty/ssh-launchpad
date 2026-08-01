@@ -23,7 +23,10 @@ standalone bootstrap scripts -> verified release artifact -> CLI or Studio
 `internal/launchpad` owns profiles, probing, planning, execution, download
 verification, journals, events, and reports. `cmd/ssh-launchpad` and `app.go`
 only translate user input into engine calls. The UI does not assemble shell
-commands or decide safety policy.
+commands or decide safety policy. The desktop shell passes the reviewed plan's
+no-change and elevation flags as execution-path hints; the authoritative plan
+digest check always happens inside the engine's own re-plan in Apply, so a
+stale hint fails closed.
 
 Secrets follow the same immutability rule. When a profile carries a
 `transport.authKey`, the planner emits a marker command instead of the real
@@ -52,8 +55,10 @@ service and firewall state is never inferred from it.
 The planner produces inspectable commands, risk, elevation, reversibility, and
 self-cut metadata. A canonical SHA-256 digest binds confirmation to the reviewed
 profile and executable plan; Apply aborts if a fresh Plan differs. The executor
-refuses unconfirmed work and writes an integrity-digested journal before
-mutations. Platform commands are intentionally declarative so unit tests can
+refuses unconfirmed work and writes a journaled record of intended and
+completed actions before mutations. The journal carries a self-computed digest
+that flags accidental corruption at rollback time; a mismatch downgrades to a
+warning rather than blocking recovery. Platform commands are intentionally declarative so unit tests can
 validate them on any CI runner. Windows-generated commands are
 parsed by PowerShell; Unix-generated commands are checked by `sh -n` and
 ShellCheck on native CI.
