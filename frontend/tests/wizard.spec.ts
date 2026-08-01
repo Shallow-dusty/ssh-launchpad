@@ -178,6 +178,33 @@ test("personal card import loads settings and starts the read-only guided check"
   await expect(page.locator("body")).not.toContainText(tailscaleAuthKey);
 });
 
+test("personal card display name is rendered as text rather than HTML", async ({ page }) => {
+  const displayName = `<img src=x onerror="window.__cardNameExecuted=true">`;
+  await page.evaluate(() => {
+    (window as typeof window & { __cardNameExecuted?: boolean }).__cardNameExecuted = false;
+  });
+  const card = JSON.stringify({
+    schemaVersion: 1,
+    kind: "ssh-launchpad-personal-card",
+    displayName,
+    ssh: { port: 22, publicKeys: [controllerPublicKey] },
+    tailscale: { mode: "tailnet", install: false }
+  });
+  await page.locator("#card-file").evaluate((element, content) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([content as string], "text-only.sshlaunchpad-card", { type: "application/json" }));
+    (element as HTMLInputElement).files = transfer.files;
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  }, card);
+
+  await expect(page.getByRole("heading", { name: "检查电脑" })).toBeVisible();
+  await page.getByRole("button", { name: "继续" }).click();
+  await expect(page.getByRole("heading", { name: "确认方案" })).toBeVisible();
+  await expect(page.locator(".card-loaded-note strong")).toContainText(displayName);
+  await expect(page.locator(".card-loaded-note img")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => Boolean((window as typeof window & { __cardNameExecuted?: boolean }).__cardNameExecuted))).toBe(false);
+});
+
 test("personal card import rejects private-key-shaped content", async ({ page }) => {
   const invalid = JSON.stringify({
     schemaVersion: 1,

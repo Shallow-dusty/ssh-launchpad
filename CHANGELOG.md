@@ -2,7 +2,7 @@
 
 All notable changes are documented here.
 
-## [0.2.4] - 2026-07-30
+## [Unreleased]
 
 ### Changed
 
@@ -36,6 +36,8 @@ All notable changes are documented here.
 - A rollback journal whose self-computed digest mismatches now warns and
   continues instead of hard-failing the recovery path.
 - Rollback confirmation uses an in-app dialog instead of native confirm().
+
+## [0.2.4] - 2026-07-30
 
 ### Added
 

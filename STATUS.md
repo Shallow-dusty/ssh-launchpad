@@ -4,7 +4,7 @@ Last locally verified: 2026-07-30
 
 Current release: [`v0.2.4`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.4)
 
-## v0.2.4
+## Unreleased toward v0.2.5
 
 - Desktop wizard rebuilt around user tasks (check → review → finish; repair
   mode: diagnose → repair → verify) following the deep audit in
@@ -14,6 +14,8 @@ Current release: [`v0.2.4`](https://github.com/Shallow-dusty/ssh-launchpad/relea
   Lucide icons. Safety simplifications: rollback-journal digest mismatch
   downgraded to a warning; the GUI's third pre-elevation Probe+Plan removed
   (digest check stays authoritative inside Apply).
+
+## v0.2.4
 
 - Personal cards (`.sshlaunchpad-card`) carry controller public keys, SSH
   port, display labels, network mode, and an optional Tailscale auth key from
