@@ -41,6 +41,7 @@ const state: {
   };
   report?: Report;
   planReport?: Report;
+  planError: string;
   verifyReport?: Report;
   busy: boolean;
   backend: boolean;
@@ -68,6 +69,7 @@ const state: {
   backend: Boolean(window.go?.main?.App),
   detectedKeys: [],
   progress: [],
+  planError: "",
   installState: "idle",
   installError: "",
   checkError: "",
@@ -125,7 +127,7 @@ async function initialise(): Promise<void> {
   window.runtime?.EventsOn("launchpad:event", (event) => {
     state.progress.push(event);
     announce(simpleEvent(state.language, event));
-    if (state.view === "wizard" && state.step === 2) renderPage();
+    if (state.view === "wizard" && state.step === 1) renderPage();
   });
   window.runtime?.EventsOn("launchpad:second-instance", () => {
     showToast(state.language === "zh-CN"
@@ -241,13 +243,20 @@ function bindPageEvents(): void {
   document.querySelector("#wizard-back")?.addEventListener("click", goHome);
   document.querySelector("#advanced-back")?.addEventListener("click", goHome);
   document.querySelector("#run-check")?.addEventListener("click", () => void runCheck());
-  document.querySelector("#check-continue")?.addEventListener("click", () => { state.step = 1; renderPage(); });
-  document.querySelector("#recommend-back")?.addEventListener("click", () => { state.step = 0; renderPage(); });
+  document.querySelector("#check-continue")?.addEventListener("click", () => void enterPlanStep());
+  document.querySelector("#plan-back")?.addEventListener("click", () => { state.step = 0; state.installState = "idle"; renderPage(); });
+  document.querySelector("#plan-retry")?.addEventListener("click", () => void runPlanStage());
+  document.querySelectorAll<HTMLInputElement>('input[name="network-mode"]').forEach((input) => input.addEventListener("change", () => {
+    setNetworkMode(input.value === "lan" ? "lan" : "tailnet");
+  }));
   document.querySelectorAll<HTMLInputElement>('input[name="controller-key"]').forEach((input) => input.addEventListener("change", () => {
     state.selectedKey = state.detectedKeys[Number(input.value)];
     if (state.selectedKey) state.profile.ssh.publicKeys = [state.selectedKey.publicKey];
-    renderPage();
+    void runPlanStage();
   }));
+  // Typing a key updates state and the install button without a full DOM
+  // rebuild (a rebuild would drop textarea focus); the plan itself is
+  // regenerated on change (blur), when the value settles.
   document.querySelector<HTMLTextAreaElement>("#public-key")?.addEventListener("input", (event) => {
     const value = (event.currentTarget as HTMLTextAreaElement).value.trim();
     if (value) {
@@ -257,13 +266,16 @@ function bindPageEvents(): void {
       state.selectedKey = undefined;
       state.profile.ssh.publicKeys = [];
     }
+    setText("#key-error", value ? "" : t("keyRequired"));
+    const openButton = document.querySelector<HTMLButtonElement>("#open-install");
+    if (openButton) openButton.disabled = !value;
+  });
+  document.querySelector<HTMLTextAreaElement>("#public-key")?.addEventListener("change", (event) => {
+    if ((event.currentTarget as HTMLTextAreaElement).value.trim()) void runPlanStage();
   });
   document.querySelector("#import-key")?.addEventListener("click", () => void importPublicKey());
   document.querySelector("#generate-key")?.addEventListener("click", () => void generatePublicKey());
   document.querySelector("#export-pairing")?.addEventListener("click", () => void exportPairing());
-  document.querySelector("#use-recommended")?.addEventListener("click", () => void useRecommended());
-  document.querySelector("#use-lan")?.addEventListener("click", () => void useLAN());
-  document.querySelector("#plan-back")?.addEventListener("click", () => { state.step = 1; state.installState = "idle"; renderPage(); });
   document.querySelector("#open-install")?.addEventListener("click", openInstallDialog);
   document.querySelector("#test-now")?.addEventListener("click", () => void runVerify());
   document.querySelector("#verify-again")?.addEventListener("click", () => void runVerify());
@@ -292,6 +304,7 @@ function startWizard(mode: WizardMode): void {
   state.step = 0;
   state.report = undefined;
   state.planReport = undefined;
+  state.planError = "";
   state.verifyReport = undefined;
   state.progress = [];
   state.installState = "idle";
@@ -300,6 +313,44 @@ function startWizard(mode: WizardMode): void {
   state.verifyError = "";
   renderPage();
   void runCheck();
+}
+
+// The plan step drives itself: a detected key is preselected (setup mode),
+// the plan builds automatically, and any later input change rebuilds it.
+async function enterPlanStep(): Promise<void> {
+  state.step = 1;
+  state.installState = "idle";
+  state.installError = "";
+  const firstDetected = state.detectedKeys[0];
+  if (state.mode === "setup" && !state.selectedKey && !state.profile.ssh.publicKeys[0] && firstDetected) {
+    state.selectedKey = firstDetected;
+    state.profile.ssh.publicKeys = [firstDetected.publicKey];
+  }
+  await runPlanStage();
+}
+
+async function runPlanStage(): Promise<void> {
+  if (state.busy) return;
+  state.busy = true;
+  state.planError = "";
+  renderPage();
+  try {
+    state.planReport = await runStage("plan");
+  } catch (error) {
+    state.planReport = undefined;
+    state.planError = friendlyError(error);
+  } finally {
+    state.busy = false;
+    renderPage();
+  }
+}
+
+function setNetworkMode(mode: "tailnet" | "lan"): void {
+  state.profile.transport.mode = mode;
+  state.profile.exposure.mode = mode;
+  state.profile.transport.install = mode === "tailnet" && !state.report?.snapshot?.tailscale.installed;
+  if (mode === "lan") state.profile.transport.authKey = "";
+  void runPlanStage();
 }
 
 async function runCheck(): Promise<void> {
@@ -311,42 +362,6 @@ async function runCheck(): Promise<void> {
     state.report = await runStage("check");
   } catch (error) {
     state.checkError = friendlyError(error);
-  } finally {
-    state.busy = false;
-    renderPage();
-  }
-}
-
-async function useRecommended(): Promise<void> {
-  await useGuidedMode("tailnet");
-}
-
-async function useLAN(): Promise<void> {
-  await useGuidedMode("lan");
-}
-
-async function useGuidedMode(mode: "tailnet" | "lan"): Promise<void> {
-  const textarea = document.querySelector<HTMLTextAreaElement>("#public-key");
-  const key = textarea?.value.trim() || state.selectedKey?.publicKey || state.profile.ssh.publicKeys[0];
-  if (!key || !(await publicKeyIsValid(key))) {
-    const error = document.querySelector<HTMLElement>("#key-error");
-    if (error) error.textContent = t("keyRequired");
-    return;
-  }
-  state.profile.ssh.publicKeys = [key];
-  state.profile.ssh.passwordAuthentication = false;
-  state.profile.transport.mode = mode;
-  state.profile.exposure.mode = mode;
-  if (mode === "lan") state.profile.transport.authKey = "";
-  state.profile.transport.install = mode === "tailnet" && !state.report?.snapshot?.tailscale.installed;
-  state.step = 2;
-  state.busy = true;
-  renderPage();
-  try {
-    state.planReport = await runStage("plan");
-  } catch (error) {
-    state.installState = "failed";
-    state.installError = friendlyError(error);
   } finally {
     state.busy = false;
     renderPage();
@@ -462,7 +477,7 @@ function finishElevatedJob(job: ElevatedJob): void {
 }
 
 async function runVerify(): Promise<void> {
-  state.step = 3;
+  state.step = 2;
   state.busy = true;
   state.verifyError = "";
   renderPage();
@@ -525,6 +540,7 @@ function selectKey(key: PublicKeyInfo): void {
   state.profile.ssh.publicKeys = [key.publicKey];
   if (!state.detectedKeys.some((existing) => existing.publicKey === key.publicKey)) state.detectedKeys.push(key);
   renderPage();
+  if (state.view === "wizard" && state.step === 1) void runPlanStage();
 }
 
 async function exportPairing(): Promise<void> {
@@ -840,6 +856,7 @@ function goHome(): void {
   state.step = 0;
   state.installState = "idle";
   state.installError = "";
+  state.planError = "";
   renderPage();
 }
 
