@@ -7,7 +7,6 @@ import {
   uploadIcon, userIcon, warningIcon
 } from "./icons";
 import type { ElevatedJob, PlanAction, Profile, PublicKeyInfo, Report, Snapshot } from "./types";
-import { APP_VERSION } from "./version";
 
 export type WizardMode = "setup" | "repair";
 export type InstallState = "idle" | "waiting-for-permission" | "running" | "failed" | "cancelled" | "completed";
@@ -212,12 +211,12 @@ export function renderAdvanced(state: ViewState, t: Translate): string {
       <label class="field"><span>${t("publicKeys")}</span><textarea id="advanced-keys" rows="5">${escapeHtml(profile.ssh.publicKeys.join("\n"))}</textarea></label>
       <label class="check-row"><input id="prevent-self-cut" type="checkbox" ${profile.safety.preventSelfCut ? "checked" : ""}/><span>${state.language === "zh-CN" ? "阻止可能切断当前远程连接的操作" : "Block changes that may cut the current remote connection"}</span></label>
       <label class="check-row"><input id="auto-rollback" type="checkbox" ${profile.safety.autoRollback ? "checked" : ""}/><span>${state.language === "zh-CN" ? "失败时自动恢复已完成的可恢复步骤" : "Automatically roll back completed reversible steps after failure"}</span></label>
-      <div class="panel-footer"><span id="advanced-status">${t("noTelemetry")}</span><button id="save-advanced" class="button primary">${t("saveAdvanced")}</button></div>
+      <div class="panel-footer"><span id="advanced-status">${t("advancedAutoApply")}</span></div>
       ${state.report ? technicalDetails(state.report, t) : ""}
     </article>
     <article class="panel material recovery-panel">
       <div><p class="eyebrow">${t("recoveryTitle")}</p><h2>${t("recoveryTitle")}</h2><p>${t("uninstallChoice")}</p></div>
-      <div class="toolbar"><button id="rollback-last" class="button secondary" ${state.report?.journalPath ? "" : "disabled"}>${t("rollbackLast")}</button><button class="button secondary" disabled title="${state.language === "zh-CN" ? `需要先有由 v${APP_VERSION} 创建的管理记录` : `Requires a v${APP_VERSION} managed-state record`}">${t("stopManaged")}</button><button id="export-report-advanced" class="button secondary">${t("exportReport")}</button><button id="check-update" class="button secondary">${t("updateCheck")}</button></div>
+      <div class="toolbar"><button id="rollback-last" class="button secondary" ${state.report?.journalPath ? "" : "disabled"}>${t("rollbackLast")}</button><button id="export-report-advanced" class="button secondary">${t("exportReport")}</button><button id="check-update" class="button secondary">${t("updateCheck")}</button></div>
       <p class="small-note">${t("reportPrivacy")}</p>
     </article>
     <aside class="unsigned-banner">${warningIcon()}<span>${t("unsignedNotice")}</span></aside>`;

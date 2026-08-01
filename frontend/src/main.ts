@@ -169,6 +169,17 @@ function buildShell(): void {
         </div>
       </form>
     </dialog>
+    <dialog id="confirm-dialog" aria-labelledby="confirm-dialog-title">
+      <form method="dialog" class="dialog-card">
+        <div class="dialog-symbol warning" aria-hidden="true">${shieldIcon()}</div>
+        <h2 id="confirm-dialog-title"></h2>
+        <p class="muted" id="confirm-dialog-body"></p>
+        <div class="dialog-actions">
+          <button value="cancel" class="button secondary">${t("cancel")}</button>
+          <button value="ok" class="button primary">${t("confirmInstall")}</button>
+        </div>
+      </form>
+    </dialog>
     <input id="profile-file" class="sr-only" type="file" accept=".yaml,.yml,.json" />
     <input id="card-file" class="sr-only" type="file" accept=".sshlaunchpad-card,.json" />
     <input id="key-file" class="sr-only" type="file" accept=".pub,.txt" />
@@ -260,6 +271,7 @@ function bindPageEvents(): void {
   document.querySelector("#finish")?.addEventListener("click", goHome);
   document.querySelector("#import-profile")?.addEventListener("click", () => void importProfile());
   document.querySelector("#export-profile")?.addEventListener("click", () => void exportProfile());
+  bindAdvancedAutoApply();
   document.querySelectorAll("#import-personal-card, #import-personal-card-advanced").forEach((button) => button.addEventListener("click", () => void importPersonalCard()));
   document.querySelector("#create-personal-card")?.addEventListener("click", () => {
     state.view = "advanced";
@@ -267,7 +279,6 @@ function bindPageEvents(): void {
     requestAnimationFrame(() => document.querySelector<HTMLInputElement>("#card-display-name")?.focus());
   });
   document.querySelector("#export-personal-card")?.addEventListener("click", () => void exportPersonalCard());
-  document.querySelector("#save-advanced")?.addEventListener("click", saveAdvanced);
   document.querySelector("#advanced-check")?.addEventListener("click", () => void runAdvancedStage("check"));
   document.querySelector("#advanced-plan")?.addEventListener("click", () => void runAdvancedStage("plan"));
   document.querySelector("#export-report-advanced")?.addEventListener("click", () => void exportReport());
@@ -474,7 +485,6 @@ async function runStage(stage: Stage): Promise<Report> {
 }
 
 async function runAdvancedStage(stage: "check" | "plan"): Promise<void> {
-  saveAdvanced();
   state.busy = true;
   try {
     state.report = await runStage(stage);
@@ -548,7 +558,6 @@ async function importProfile(): Promise<void> {
 }
 
 async function exportProfile(): Promise<void> {
-  saveAdvanced();
   if (window.go?.main?.App) {
     const path = await window.go.main.App.ExportProfile(state.profile);
     if (path) showToast(t("profileExported"));
@@ -572,7 +581,6 @@ async function importPersonalCard(): Promise<void> {
 }
 
 async function exportPersonalCard(): Promise<void> {
-  saveAdvanced();
   const card = buildPersonalCard();
   const error = await validatePersonalCardClient(card);
   if (error) {
@@ -668,24 +676,48 @@ function safeCardFilename(value: string): string {
   return value.trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").replace(/[. ]+$/g, "") || "ssh-launchpad-personal";
 }
 
-function saveAdvanced(): void {
-  const platform = document.querySelector<HTMLSelectElement>("#target-platform");
-  if (!platform) return;
-  state.personalCard.displayName = valueOf("card-display-name");
-  state.personalCard.controllerName = valueOf("card-controller-name");
-  state.personalCard.note = valueOf("card-note");
-  state.profile.target.platform = platform.value;
-  state.profile.ssh.port = Number(valueOf("ssh-port"));
+// Advanced settings apply live: every field writes straight into state on
+// input, so there is no save button and no hidden save side effect inside
+// Check / Plan / Export actions. #advanced-status is a plain (non-live)
+// region, so per-keystroke updates stay quiet for screen readers.
+function bindAdvancedAutoApply(): void {
+  if (!document.querySelector("#target-platform")) return;
+  const applied = () => setText("#advanced-status", t("advancedSaved"));
+  const onInput = (id: string, apply: (value: string) => void) => {
+    document.querySelector(`#${id}`)?.addEventListener("input", (event) => {
+      apply((event.currentTarget as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).value);
+      applied();
+    });
+  };
+  onInput("card-display-name", (value) => { state.personalCard.displayName = value; });
+  onInput("card-controller-name", (value) => { state.personalCard.controllerName = value; });
+  onInput("card-note", (value) => { state.personalCard.note = value; });
+  onInput("card-tailscale-auth-key", () => { syncTransport(); });
+  onInput("target-platform", (value) => { state.profile.target.platform = value; });
+  onInput("ssh-port", (value) => {
+    const port = Number(value);
+    if (Number.isInteger(port) && port >= 1 && port <= 65535) state.profile.ssh.port = port;
+  });
+  onInput("transport-mode", () => { syncTransport(); });
+  onInput("exposure-mode", (value) => { state.profile.exposure.mode = value; });
+  onInput("download-strategy", (value) => { state.profile.download.strategy = value; });
+  onInput("advanced-keys", (value) => {
+    state.profile.ssh.publicKeys = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  });
+  document.querySelector("#prevent-self-cut")?.addEventListener("change", () => {
+    state.profile.safety.preventSelfCut = checked("prevent-self-cut");
+    applied();
+  });
+  document.querySelector("#auto-rollback")?.addEventListener("change", () => {
+    state.profile.safety.autoRollback = checked("auto-rollback");
+    applied();
+  });
+}
+
+function syncTransport(): void {
   state.profile.transport.mode = valueOf("transport-mode");
-  state.profile.exposure.mode = valueOf("exposure-mode");
   state.profile.transport.install = state.profile.transport.mode === "tailnet" && !state.report?.snapshot?.tailscale.installed;
   state.profile.transport.authKey = state.profile.transport.mode === "tailnet" ? valueOf("card-tailscale-auth-key").trim() : "";
-  state.profile.download.strategy = valueOf("download-strategy");
-  state.profile.ssh.publicKeys = valueOf("advanced-keys").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  state.profile.safety.preventSelfCut = checked("prevent-self-cut");
-  state.profile.safety.autoRollback = checked("auto-rollback");
-  setText("#advanced-status", t("advancedSaved"));
-  announce(t("advancedSaved"));
 }
 
 async function exportReport(): Promise<void> {
@@ -728,7 +760,7 @@ async function checkForUpdate(): Promise<void> {
 
 async function rollbackLast(): Promise<void> {
   if (!state.report?.journalPath || !window.go?.main?.App) return;
-  if (!confirm(t("rollbackLast"))) return;
+  if (!(await confirmDialog(t("rollbackLast"), t("rollbackConfirmBody")))) return;
   try {
     const report = await window.go.main.App.Rollback(state.report.journalPath);
     state.report = report;
@@ -832,6 +864,20 @@ async function mockElevatedApply(request: DesktopRequest): Promise<ElevatedJob> 
   report.exitCode = 0;
   report.results = mockActions(request.profile.ssh.port).map((action) => ({ actionId: action.id, status: "completed" }));
   return { id: "mock", state: "completed", report };
+}
+
+function confirmDialog(title: string, body: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const dialog = document.querySelector<HTMLDialogElement>("#confirm-dialog")!;
+    setText("#confirm-dialog-title", title);
+    setText("#confirm-dialog-body", body);
+    const onClose = () => {
+      dialog.removeEventListener("close", onClose);
+      resolve(dialog.returnValue === "ok");
+    };
+    dialog.addEventListener("close", onClose);
+    dialog.showModal();
+  });
 }
 
 function showToast(message: string): void {
