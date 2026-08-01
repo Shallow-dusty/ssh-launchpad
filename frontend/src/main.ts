@@ -49,6 +49,8 @@ const state: {
   progress: Array<{ kind: string; message: string; actionId?: string }>;
   installState: InstallState;
   installError: string;
+  checkError: string;
+  verifyError: string;
   activeJob?: ElevatedJob;
   toast: string;
 } = {
@@ -68,6 +70,8 @@ const state: {
   progress: [],
   installState: "idle",
   installError: "",
+  checkError: "",
+  verifyError: "",
   toast: ""
 };
 
@@ -281,6 +285,8 @@ function startWizard(mode: WizardMode): void {
   state.progress = [];
   state.installState = "idle";
   state.installError = "";
+  state.checkError = "";
+  state.verifyError = "";
   renderPage();
   void runCheck();
 }
@@ -288,11 +294,12 @@ function startWizard(mode: WizardMode): void {
 async function runCheck(): Promise<void> {
   if (state.busy) return;
   state.busy = true;
+  state.checkError = "";
   renderPage();
   try {
     state.report = await runStage("check");
   } catch (error) {
-    state.toast = friendlyError(error);
+    state.checkError = friendlyError(error);
   } finally {
     state.busy = false;
     renderPage();
@@ -395,6 +402,10 @@ async function beginSafeInstall(): Promise<void> {
 
 async function pollElevatedJob(id: string): Promise<void> {
   const deadline = Date.now() + 30 * 60 * 1000;
+  // Rendering is event-driven: a full DOM rebuild every poll tick would steal
+  // focus, reset scroll, and spam the aria-live region, so only re-render
+  // when the job state or the event count actually changes.
+  let renderedFingerprint = "";
   while (true) {
     if (Date.now() > deadline) {
       state.installState = "failed";
@@ -406,7 +417,11 @@ async function pollElevatedJob(id: string): Promise<void> {
     state.activeJob = job;
     state.progress = job.events ?? [];
     state.installState = job.state === "waiting-for-permission" ? "waiting-for-permission" : job.state === "running" ? "running" : job.state;
-    renderPage();
+    const fingerprint = `${state.installState}|${state.progress.length}`;
+    if (fingerprint !== renderedFingerprint) {
+      renderedFingerprint = fingerprint;
+      renderPage();
+    }
     if (["completed", "failed", "cancelled"].includes(job.state)) {
       finishElevatedJob(job);
       await window.go!.main!.App!.DismissElevatedJob(id);
@@ -438,12 +453,15 @@ function finishElevatedJob(job: ElevatedJob): void {
 async function runVerify(): Promise<void> {
   state.step = 3;
   state.busy = true;
+  state.verifyError = "";
   renderPage();
   try {
+    // A failed verification must surface as a failure, never backfilled with
+    // the stale Apply-time report.
     state.verifyReport = await runStage("verify");
   } catch (error) {
-    state.verifyReport = state.activeJob?.report;
-    state.toast = friendlyError(error);
+    state.verifyReport = undefined;
+    state.verifyError = friendlyError(error);
   } finally {
     state.busy = false;
     renderPage();

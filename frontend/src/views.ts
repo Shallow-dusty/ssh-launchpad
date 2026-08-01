@@ -32,6 +32,8 @@ export interface ViewState {
   progress: Array<{ kind: string; message: string; actionId?: string }>;
   installState: InstallState;
   installError: string;
+  checkError: string;
+  verifyError: string;
   activeJob?: ElevatedJob;
 }
 
