@@ -2,8 +2,8 @@ import type { Language, MessageKey } from "./i18n";
 import { escapeHtml } from "./browser-utils";
 import {
   arrowIcon, backIcon, checkIcon, closeIcon, computerIcon, copyIcon, devicesIcon,
-  doorIcon, downloadIcon, infoIcon, keyIcon, lockIcon, networkIcon, packageIcon,
-  powerIcon, repairIcon, screenIcon, searchIcon, shieldIcon, slidersIcon,
+  doorIcon, downloadIcon, infoIcon, keyIcon, lockIcon, monitorCheckIcon, networkIcon,
+  packageIcon, powerIcon, repairIcon, screenIcon, searchIcon, shieldIcon, slidersIcon,
   uploadIcon, userIcon, warningIcon
 } from "./icons";
 import type { ElevatedJob, PlanAction, Profile, PublicKeyInfo, Report, Snapshot } from "./types";
@@ -171,9 +171,9 @@ function renderTestStep(state: ViewState, t: Translate): string {
   return `
     ${resultBanner(ready ? "good" : "warn", ready ? t("testReady") : t("testNeeds", { count: remaining }), ready ? t("testReadyBody") : t("testNeedsBody"), t)}
     <article class="connection-card material">
-      <div class="connection-visual">${devicesIcon()}<span></span>${checkIcon()}</div>
+      <div class="connection-visual ${ready ? "ready" : ""}">${ready ? monitorCheckIcon() : devicesIcon()}<b>${ready ? t("visualReady") : t("visualWaiting")}</b></div>
       <h2>${t("connectFromOther")}</h2>
-      <div class="connection-facts"><span><small>${t("host")}</small><b>${escapeHtml(snapshot?.hostname ?? "—")}</b></span><span><small>${t("address")}</small><b>${escapeHtml(address ?? "—")}</b></span><span><small>${t("willOpen")}</small><b>${state.profile.ssh.port}</b></span></div>
+      <div class="connection-facts"><div><span>${t("host")}</span><strong>${escapeHtml(snapshot?.hostname ?? "—")}</strong></div><div><span>${t("address")}</span><strong>${escapeHtml(address ?? "—")}</strong></div><div><span>${t("portLabel")}</span><strong>${state.profile.ssh.port}</strong></div></div>
       <div class="copy-box"><code>${escapeHtml(command)}</code><button id="copy-command" class="button secondary">${copyIcon()} ${t("copyCommand")}</button></div>
       <aside class="info-note">${infoIcon()}<span>${t("nextDevice")}</span></aside>
       ${(report?.plan?.blockers?.length ?? 0) > 0 ? `<aside class="danger-note">${warningIcon()}<span>${escapeHtml(report!.plan!.blockers!.join(" "))}</span></aside>` : ""}

@@ -159,7 +159,10 @@ button.task-card { width: 100%; }
 .result-banner.bad { color: var(--bad); background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 25%, transparent); }
 .result-banner p { margin: .1rem 0 0; color: var(--text); }
 .plain-grid { margin: 1rem 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
-.plain-card { padding: 1rem; box-shadow: none; }
+.plain-card { padding: 1rem; display: grid; grid-template-columns: auto 1fr; gap: .05rem .8rem; align-items: start; box-shadow: none; }
+.plain-card > span { grid-row: 1 / 3; margin-top: .15rem; color: var(--accent); }
+.plain-card small, .plain-card strong { display: block; min-width: 0; overflow-wrap: anywhere; }
+.plain-card small { color: var(--muted); font-size: .77rem; }
 .plain-card p { margin: .25rem 0 0; color: var(--muted); }
 .recommendation-card { padding: 1.25rem; display: grid; grid-template-columns: auto 1fr; gap: 1rem; }
 .info-note, .danger-note, .boundary-note, .unsigned-banner, .success-note, .inline-error { padding: .85rem 1rem; border-radius: 13px; }
@@ -212,10 +215,13 @@ button.task-card { width: 100%; }
 .progress-note.completed { color: var(--good); background: var(--good-soft); }
 
 .connection-card { padding: clamp(1.1rem, 4vw, 2rem); display: grid; grid-template-columns: minmax(180px, .7fr) minmax(0, 1.3fr); gap: 1.5rem; align-items: center; }
-.connection-visual { min-height: 180px; display: grid; place-items: center; border-radius: 18px; color: var(--good); background: var(--good-soft); font-size: 4rem; }
+.connection-visual { min-height: 180px; padding: 1.2rem; display: grid; place-items: center; align-content: center; gap: .7rem; border-radius: 18px; color: var(--muted); background: var(--soft); text-align: center; }
+.connection-visual.ready { color: var(--good); background: var(--good-soft); }
+.connection-visual svg { width: 3rem; height: 3rem; }
+.connection-visual b { font-size: .85rem; font-weight: 640; }
 .connection-facts { display: grid; gap: .65rem; }
 .connection-facts > div { padding-bottom: .55rem; border-bottom: 1px solid var(--line); }
-.connection-facts span, .connection-facts strong { display: block; overflow-wrap: anywhere; }
+.connection-facts span, .connection-facts strong { display: block; min-width: 0; overflow-wrap: anywhere; }
 .connection-facts span { color: var(--muted); font-size: .77rem; }
 .copy-box { padding: .8rem; display: flex; align-items: center; justify-content: space-between; gap: .7rem; border: 1px solid var(--line); border-radius: 12px; background: var(--solid); }
 .copy-box code { min-width: 0; overflow-wrap: anywhere; }
