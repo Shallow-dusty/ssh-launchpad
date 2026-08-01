@@ -9,7 +9,7 @@
 1. 在 [最新 Release](https://github.com/Shallow-dusty/ssh-launchpad/releases/latest) 下载
    `SSH-Launchpad_*_Windows_x64_Installer_UNSIGNED.exe`（推荐）。
 2. 双击安装并打开，首屏选择“让这台电脑可以被远程连接”。
-3. 按“检查电脑 → 推荐方案 → 安全安装 → 测试连接”完成向导。
+3. 按“检查电脑 → 确认方案 → 完成连接”完成向导。
 
 普通用户直接启动即可；真正安装系统组件时才会出现 Windows UAC 权限确认。取消确认不会继续执行。
 

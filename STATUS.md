@@ -6,6 +6,15 @@ Current release: [`v0.2.4`](https://github.com/Shallow-dusty/ssh-launchpad/relea
 
 ## v0.2.4
 
+- Desktop wizard rebuilt around user tasks (check → review → finish; repair
+  mode: diagnose → repair → verify) following the deep audit in
+  `docs/design-audit-2026-08.md`: self-driving plan step with preselected
+  keys, consequence-labelled network choice, issue lists, persistent error
+  states, live-applied advanced settings, restrained visual tokens, and
+  Lucide icons. Safety simplifications: rollback-journal digest mismatch
+  downgraded to a warning; the GUI's third pre-elevation Probe+Plan removed
+  (digest check stays authoritative inside Apply).
+
 - Personal cards (`.sshlaunchpad-card`) carry controller public keys, SSH
   port, display labels, network mode, and an optional Tailscale auth key from
   the controller to a new device, prefilling the wizard and starting from the

@@ -4,6 +4,39 @@ All notable changes are documented here.
 
 ## [0.2.4] - 2026-07-30
 
+### Changed
+
+- Rebuilt the desktop wizard around user tasks instead of engine stages:
+  three steps (check, review, finish; diagnose, repair, verify in repair
+  mode), a self-driving plan step that preselects the detected controller
+  key and rebuilds the plan on every input change, and a network-exposure
+  choice that states the consequences of each option.
+- Check results list concrete issues instead of an opaque step count;
+  normal "not yet configured" states use neutral info styling rather than
+  warning colours, and the permanently visible unsigned-installer notice
+  left danger red for a neutral note.
+- Advanced settings apply live on input; the save button and the hidden
+  save side effects inside Check/Plan/Export are gone.
+- Restrained the visual system: 12px radii, solid surfaces, small layered
+  shadows, a single type scale, solid accent buttons, and Lucide icons.
+- The desktop shell no longer runs a third full Probe+Plan before
+  elevation; the reviewed plan's flags route execution while the
+  authoritative digest check stays inside Apply's own re-plan.
+
+### Fixed
+
+- Plain-card and connection-facts layouts no longer jam labels and values
+  together; the test step labels the port correctly and the connection
+  visual is a real status emblem.
+- Plan failures render a retryable error instead of an infinite spinner;
+  a failed verify no longer backfills the stale Apply report; check
+  failures persist instead of vanishing as toasts.
+- Elevated-job polling re-renders only on state or event changes instead
+  of rebuilding the DOM twice per second.
+- A rollback journal whose self-computed digest mismatches now warns and
+  continues instead of hard-failing the recovery path.
+- Rollback confirmation uses an in-app dialog instead of native confirm().
+
 ### Added
 
 - Personal cards: export a compact `.sshlaunchpad-card` on the controller
