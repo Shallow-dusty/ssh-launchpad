@@ -2,11 +2,9 @@
 
 Last locally verified: 2026-08-01
 
-Current release: [`v0.2.4`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.4)
+Current release: [`v0.2.5`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.5)
 
-Release candidate: `v0.2.5`
-
-## v0.2.5 release candidate
+## v0.2.5
 
 - Desktop wizard rebuilt around user tasks (check → review → finish; repair
   mode: diagnose → repair → verify) following the deep audit in
