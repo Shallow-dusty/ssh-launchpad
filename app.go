@@ -355,7 +355,7 @@ func marshalExportProfile(profile launchpad.Profile) ([]byte, error) {
 
 func (a *App) ImportPersonalCard() (launchpad.PersonalCard, error) {
 	path, err := wailsruntime.OpenFileDialog(a.ctx, wailsruntime.OpenDialogOptions{
-		Title: "导入 SSH Launchpad 个人信息卡",
+		Title: "导入 SSH Launchpad 装机卡",
 		Filters: []wailsruntime.FileFilter{
 			{DisplayName: "SSH Launchpad personal card", Pattern: "*.sshlaunchpad-card;*.json"},
 		},
@@ -373,7 +373,7 @@ func (a *App) ExportPersonalCard(card launchpad.PersonalCard) (string, error) {
 	}
 	filename := safeCardFilename(card.DisplayName) + ".sshlaunchpad-card"
 	path, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
-		Title:           "导出 SSH Launchpad 个人信息卡",
+		Title:           "导出 SSH Launchpad 装机卡",
 		DefaultFilename: filename,
 		Filters: []wailsruntime.FileFilter{
 			{DisplayName: "SSH Launchpad personal card", Pattern: "*.sshlaunchpad-card"},

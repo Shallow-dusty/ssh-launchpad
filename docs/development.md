@@ -26,8 +26,9 @@ pwsh -NoProfile -File scripts/build-windows-installer.ps1 -Version 0.2.5
 Never run tests that change SSH, Tailscale, RDP, or firewall state on a real
 host; cover those paths with mocks and generated-command tests.
 
-Release packaging is owned by `scripts/package-release.ps1` and
-`.github/workflows/release.yml`. Portable artifacts contain compiled binaries
-and do not require this development toolchain. A release tag must have a
-matching `.github/release-notes-<tag>.md`; publishing deliberately fails when
-the file is absent.
+Local full-package assembly is provided by `scripts/package-release.ps1`; the
+release workflow performs the equivalent isolated packaging jobs in CI and
+runs the Windows installer/upgrade smoke on a Windows runner. Portable
+artifacts contain compiled binaries and do not require this development
+toolchain. A release tag must have a matching `.github/release-notes-<tag>.md`;
+publishing deliberately fails when the file is absent.

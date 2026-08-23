@@ -5,6 +5,16 @@ import { readFile } from "node:fs/promises";
 const controllerPublicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB personal-controller";
 const tailscaleAuthKey = "tskey-" + "auth-k1234567890abcdef-1234567890abcdef";
 
+async function startSetup(page: import("@playwright/test").Page): Promise<void> {
+  await page.getByRole("button", { name: "开始", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "检查电脑" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /这台电脑还没有开启远程连接|这台电脑已经可以被远程连接/ })).toBeVisible();
+}
+
+async function continueFromCheck(page: import("@playwright/test").Page): Promise<void> {
+  await page.getByRole("button", { name: /继续|去验证/ }).click();
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => localStorage.clear());
@@ -14,84 +24,82 @@ test.beforeEach(async ({ page }) => {
 
 test("Chinese first-run wizard completes the recommended mock path", async ({ page }) => {
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
-  await expect(page.getByRole("heading", { name: "你想做什么？" })).toBeVisible();
-  await expect(page.getByText("被连接电脑")).toBeVisible();
-  await page.getByRole("button", { name: /让这台电脑可以被远程连接/ }).click();
-  await expect(page.getByRole("heading", { name: "检查电脑" })).toBeVisible();
-  await expect(page.getByText(/还差 \d+ 步/)).toBeVisible();
-  await page.getByRole("button", { name: "继续" }).click();
-  await expect(page.getByRole("heading", { name: "确认方案" })).toBeVisible();
-  await expect(page.getByText("谁能访问这台电脑")).toBeVisible();
-  // The detected controller key is preselected; the plan builds itself.
-  await expect(page.getByRole("radio", { name: /id_ed25519/ })).toBeChecked();
-  await expect(page.getByText("谁能连接")).toBeVisible();
-  await expect(page.getByText(/将要做这些事/)).toBeVisible();
-  await page.getByRole("button", { name: "开始安全安装" }).click();
+  await expect(page.getByRole("heading", { name: "让这台电脑可以被远程连接" })).toBeVisible();
+  await startSetup(page);
+  await expect(page.getByRole("button", { name: "继续" })).toBeVisible();
+  await continueFromCheck(page);
+  await expect(page.getByRole("heading", { name: "准备安装" })).toBeVisible();
+  await expect(page.getByText("将会发生这些改动")).toBeVisible();
+  await expect(page.getByRole("button", { name: "开始安装" })).toBeEnabled();
+
+  await page.getByRole("button", { name: "开始安装" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(page.getByRole("button", { name: /继续并弹出 Windows 权限确认/ })).toBeDisabled();
+  const installDialog = page.getByRole("dialog");
+  await expect(installDialog.getByRole("button", { name: "开始安装", exact: true })).toBeDisabled();
   await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: /继续并弹出 Windows 权限确认/ }).click();
-  await expect(page.getByRole("heading", { name: /已准备好|还差/ })).toBeVisible();
+  await installDialog.getByRole("button", { name: "开始安装", exact: true }).click();
+
+  await expect(page.getByRole("heading", { name: "这台电脑可以被远程连接了" })).toBeVisible();
   await expect(page.getByText(/ssh -p 22/)).toBeVisible();
-  await expect(page.getByText(/主机指纹/)).toBeVisible();
+  await expect(page.getByText("第一次连接时")).toBeVisible();
 });
 
-test("fresh computer without public keys can continue and switch language", async ({ page }) => {
+test("fresh computer without public keys asks neutrally and blocks installation until a key is supplied", async ({ page }) => {
   await page.goto("/?mock=no-public-key");
-  await page.getByRole("button", { name: /让这台电脑可以被远程连接/ }).click();
-  await expect(page.getByRole("heading", { name: "检查电脑" })).toBeVisible();
-  await page.getByRole("button", { name: "继续" }).click();
-  await expect(page.getByRole("heading", { name: "确认方案" })).toBeVisible();
-  await expect(page.getByLabel("粘贴控制电脑公钥")).toHaveValue("");
-  await expect(page.getByRole("button", { name: "开始安全安装" })).toBeDisabled();
+  await startSetup(page);
+  await continueFromCheck(page);
+  await expect(page.getByRole("heading", { name: "准备安装" })).toBeVisible();
+  await expect(page.getByLabel("粘贴公钥")).toHaveValue("");
+  await expect(page.getByText("还差一样：控制电脑的公钥")).toBeVisible();
+  await expect(page.getByRole("button", { name: "开始安装" })).toBeDisabled();
 
-  await page.getByLabel("语言").selectOption("en");
-  await expect(page.getByRole("heading", { name: "Review the plan" })).toBeVisible();
-  await expect(page.getByLabel("Paste controller public key")).toHaveValue("");
+  await page.getByLabel("粘贴公钥").fill(controllerPublicKey);
+  await expect(page.getByRole("button", { name: "开始安装" })).toBeEnabled();
 });
 
 test("clearing a selected key clears profile state and blocks continuation", async ({ page }) => {
-  await page.getByRole("button", { name: /让这台电脑可以被远程连接/ }).click();
-  await page.getByRole("button", { name: "继续" }).click();
-  await expect(page.getByRole("radio", { name: /id_ed25519/ })).toBeChecked();
-  await expect(page.getByRole("button", { name: "开始安全安装" })).toBeEnabled();
-  await page.getByLabel("粘贴控制电脑公钥").fill("");
-  await expect(page.locator("#key-error")).toContainText("还需要控制电脑的公钥");
-  await expect(page.getByRole("button", { name: "开始安全安装" })).toBeDisabled();
-  await expect(page.getByRole("heading", { name: "确认方案" })).toBeVisible();
+  await startSetup(page);
+  await continueFromCheck(page);
+  await page.locator("#change-key").click();
+  await expect(page.getByLabel("粘贴公钥")).not.toHaveValue("");
+  await page.getByLabel("粘贴公钥").fill("");
+  await expect(page.getByText("还差一样：控制电脑的公钥")).toBeVisible();
+  await expect(page.getByRole("button", { name: "开始安装" })).toBeDisabled();
+  await expect(page.getByRole("heading", { name: "准备安装" })).toBeVisible();
 });
 
 test("guided mode can explicitly choose LAN instead of Tailscale", async ({ page }) => {
-  await page.getByRole("button", { name: /让这台电脑可以被远程连接/ }).click();
-  await page.getByRole("button", { name: "继续" }).click();
-  await expect(page.getByRole("radio", { name: /Tailscale 私有网络/ })).toBeChecked();
-  await page.getByRole("radio", { name: /仅局域网/ }).check();
-  await expect(page.getByText("谁能连接")).toBeVisible();
-  await expect(page.getByRole("button", { name: "开始安全安装" })).toBeEnabled();
+  await startSetup(page);
+  await continueFromCheck(page);
+  await page.locator("#change-network").click();
+  await expect(page.getByRole("radio", { name: /Tailscale/ })).toBeChecked();
+  await page.getByRole("radio", { name: /仅同一局域网/ }).check();
+  await expect(page.getByText("仅同一局域网的设备", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "开始安装" })).toBeEnabled();
 });
 
 test("language switch persists and avoids mixed default navigation", async ({ page }) => {
-  await page.getByLabel("语言").selectOption("en");
-  await expect(page.getByRole("heading", { name: "What would you like to do?" })).toBeVisible();
+  await page.getByRole("button", { name: "EN" }).click();
+  await expect(page.getByRole("button", { name: "Get started", exact: true })).toBeVisible();
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
-  await expect(page.getByRole("button", { name: /Let me connect to this computer remotely/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Get started", exact: true })).toBeVisible();
   await expect(page.getByText("让这台电脑可以被远程连接")).toHaveCount(0);
 });
 
 test("advanced mode imports a profile and preserves safe defaults", async ({ page }) => {
-  await page.getByRole("button", { name: /高级模式/ }).click();
+  await page.getByRole("button", { name: "高级选项" }).click();
   const profile = JSON.stringify({
-      schemaVersion: 1,
-      name: "import-test",
-      target: { platform: "windows" },
-      ssh: { enabled: true, port: 2222, publicKeys: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB imported-controller"], passwordAuthentication: false },
-      transport: { mode: "tailnet", install: false },
-      exposure: { mode: "tailnet", customCidrs: [] },
-      download: { strategy: "official", retries: 3 },
-      safety: { confirmHighRisk: true, preventSelfCut: true, scheduledDelaySeconds: 20, autoRollback: true },
-      advanced: {}
-    });
+    schemaVersion: 1,
+    name: "import-test",
+    target: { platform: "windows" },
+    ssh: { enabled: true, port: 2222, publicKeys: [controllerPublicKey], passwordAuthentication: false },
+    transport: { mode: "tailnet", install: false },
+    exposure: { mode: "tailnet", customCidrs: [] },
+    download: { strategy: "official", retries: 3 },
+    safety: { confirmHighRisk: true, preventSelfCut: true, scheduledDelaySeconds: 20, autoRollback: true },
+    advanced: {}
+  });
   await page.locator("#profile-file").evaluate((element, content) => {
     const transfer = new DataTransfer();
     transfer.items.add(new File([content as string], "import.json", { type: "application/json" }));
@@ -103,17 +111,17 @@ test("advanced mode imports a profile and preserves safe defaults", async ({ pag
   await expect(page.locator("#auto-rollback")).toBeChecked();
 });
 
-test("personal card exports public settings and an optional masked Tailscale auth key", async ({ page }) => {
-  await page.getByRole("button", { name: "创建信息卡" }).click();
-  await page.getByLabel("信息卡名称").fill("实验电脑");
-  await page.getByLabel("控制电脑名称").fill("主控制电脑");
+test("personal card exports public settings and an optional Tailscale auth key", async ({ page }) => {
+  await page.getByRole("button", { name: "高级选项" }).click();
+  await page.getByLabel("名称").fill("实验电脑");
+  await page.getByLabel("控制电脑", { exact: true }).fill("主控制电脑");
   await page.getByLabel("备注").fill("用于多设备实验");
   await page.getByLabel("Tailscale 授权码（可选）").fill(tailscaleAuthKey);
   await page.getByLabel("远程连接端口").fill("2222");
   await page.getByLabel("控制电脑公钥（每行一个）").fill(controllerPublicKey);
 
   const download = page.waitForEvent("download");
-  await page.getByRole("button", { name: "导出信息卡" }).click();
+  await page.getByRole("button", { name: "导出装机卡" }).click();
   const saved = await download;
   expect(saved.suggestedFilename()).toBe("实验电脑.sshlaunchpad-card");
   const card = JSON.parse(await readFile(await saved.path(), "utf8"));
@@ -129,17 +137,16 @@ test("personal card exports public settings and an optional masked Tailscale aut
   expect(JSON.stringify(card)).not.toContain("PRIVATE KEY");
 });
 
-test("ordinary profile export omits a personal-card Tailscale auth key", async ({ page }) => {
-  await page.getByRole("button", { name: /高级模式/ }).click();
+test("browser profile export preserves settings but omits a Tailscale auth key", async ({ page }) => {
+  await page.getByRole("button", { name: "高级选项" }).click();
   await page.getByLabel("Tailscale 授权码（可选）").fill(tailscaleAuthKey);
+  await page.getByLabel("远程连接端口").fill("2222");
 
   await page.evaluate(() => {
     const captured = window as typeof window & { __profileExport?: string };
     captured.__profileExport = "";
     URL.createObjectURL = (blob: Blob) => {
-      void blob.text().then((text) => {
-        captured.__profileExport = text;
-      });
+      void blob.text().then((text) => { captured.__profileExport = text; });
       return "blob:ssh-launchpad-profile-test";
     };
     URL.revokeObjectURL = () => undefined;
@@ -148,6 +155,7 @@ test("ordinary profile export omits a personal-card Tailscale auth key", async (
   await page.getByRole("button", { name: "导出 YAML 配置" }).click();
   await expect.poll(() => page.evaluate(() => (window as typeof window & { __profileExport?: string }).__profileExport)).not.toBe("");
   const yaml = await page.evaluate(() => (window as typeof window & { __profileExport?: string }).__profileExport ?? "");
+  expect(yaml).toContain("port: 2222");
   expect(yaml).not.toContain(tailscaleAuthKey);
   expect(yaml).not.toMatch(/^\s*authKey:/m);
 });
@@ -170,11 +178,12 @@ test("personal card import loads settings and starts the read-only guided check"
   }, card);
 
   await expect(page.getByRole("heading", { name: "检查电脑" })).toBeVisible();
-  await expect(page.getByText(/还差 \d+ 步/)).toBeVisible();
+  await expect(page.getByRole("heading", { name: /还没有开启远程连接/ })).toBeVisible();
   await page.getByRole("button", { name: "继续" }).click();
-  await expect(page.getByRole("heading", { name: "确认方案" })).toBeVisible();
-  await expect(page.getByText("已载入“实验室卡片”")).toBeVisible();
-  await expect(page.getByLabel("粘贴控制电脑公钥")).toHaveValue(controllerPublicKey);
+  await expect(page.getByRole("heading", { name: "准备安装" })).toBeVisible();
+  await expect(page.locator(".card-loaded strong")).toContainText("实验室卡片");
+  await page.locator("#change-key").click();
+  await expect(page.getByLabel("粘贴公钥")).toHaveValue(controllerPublicKey);
   await expect(page.locator("body")).not.toContainText(tailscaleAuthKey);
 });
 
@@ -199,9 +208,9 @@ test("personal card display name is rendered as text rather than HTML", async ({
 
   await expect(page.getByRole("heading", { name: "检查电脑" })).toBeVisible();
   await page.getByRole("button", { name: "继续" }).click();
-  await expect(page.getByRole("heading", { name: "确认方案" })).toBeVisible();
-  await expect(page.locator(".card-loaded-note strong")).toContainText(displayName);
-  await expect(page.locator(".card-loaded-note img")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "准备安装" })).toBeVisible();
+  await expect(page.locator(".card-loaded strong")).toContainText(displayName);
+  await expect(page.locator(".card-loaded img")).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => Boolean((window as typeof window & { __cardNameExecuted?: boolean }).__cardNameExecuted))).toBe(false);
 });
 
@@ -219,31 +228,47 @@ test("personal card import rejects private-key-shaped content", async ({ page })
     (element as HTMLInputElement).files = transfer.files;
     element.dispatchEvent(new Event("change", { bubbles: true }));
   }, invalid);
-  await expect(page.locator("#toast")).toContainText(/私钥|PRIVATE KEY/);
-  await expect(page.getByRole("heading", { name: "你想做什么？" })).toBeVisible();
+  await expect(page.locator("#toast")).toContainText("私钥");
+  await expect(page.getByRole("heading", { name: "让这台电脑可以被远程连接" })).toBeVisible();
+});
+
+test("a blocked offline Tailscale plan still lets the user switch to LAN", async ({ page }) => {
+  await page.goto("/?mock=tailnet-offline");
+  await startSetup(page);
+  await continueFromCheck(page);
+  await expect(page.getByText("现在不能安全继续")).toBeVisible();
+  await page.locator("#change-network").click();
+  await page.getByRole("radio", { name: /仅同一局域网/ }).check();
+  await expect(page.getByRole("button", { name: "开始安装" })).toBeEnabled();
+});
+
+test("repair mode lists unsafe firewall state instead of claiming the machine is healthy", async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem("ssh-launchpad-demo-ready", "true"));
+  await page.goto("/?mock=unsafe-firewall");
+  await page.getByRole("button", { name: "连接不上？检查并修复" }).click();
+  await expect(page.getByRole("heading", { name: "检查问题" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "发现几处需要修复的问题" })).toBeVisible();
+  await expect(page.getByText("防火墙只允许 Tailscale 网络的设备连接该端口")).toBeVisible();
 });
 
 test("cancelled UAC is a plain no-change result and can retry", async ({ page }) => {
   await page.goto("/?mock=uac-cancel");
-  await page.getByRole("button", { name: /让这台电脑可以被远程连接/ }).click();
-  await page.getByRole("button", { name: "继续" }).click();
-  await expect(page.getByText("谁能连接")).toBeVisible();
-  await page.getByRole("button", { name: "开始安全安装" }).click();
+  await startSetup(page);
+  await continueFromCheck(page);
+  await page.getByRole("button", { name: "开始安装" }).click();
   await page.getByRole("checkbox").check();
-  await page.getByRole("button", { name: /继续并弹出 Windows 权限确认/ }).click();
-  await expect(page.getByRole("heading", { name: "没有改动" })).toBeVisible();
-  await expect(page.getByText(/取消了 Windows 权限确认/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "重试" })).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "开始安装", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "已取消，电脑没有改动。" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "重新安装" })).toBeVisible();
 });
 
 test("second visit is idempotent and narrow layout remains usable", async ({ page }) => {
   await page.setViewportSize({ width: 480, height: 800 });
   await page.evaluate(() => localStorage.setItem("ssh-launchpad-demo-ready", "true"));
-  await page.getByRole("button", { name: /让这台电脑可以被远程连接/ }).click();
-  await expect(page.getByRole("heading", { name: "已准备好" })).toBeVisible();
-  await page.getByRole("button", { name: "继续" }).click();
-  await expect(page.getByText(/已经配置好，无需重复改动/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "无需改动，直接验证" })).toBeVisible();
+  await startSetup(page);
+  await expect(page.getByRole("heading", { name: "这台电脑已经可以被远程连接" })).toBeVisible();
+  await page.getByRole("button", { name: "去验证" }).click();
+  await expect(page.getByRole("heading", { name: "这台电脑可以被远程连接了" })).toBeVisible();
   await expect(page.locator("body")).not.toHaveCSS("min-width", "900px");
 });
 

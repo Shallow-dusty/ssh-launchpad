@@ -119,6 +119,25 @@ func TestDownloadRejectsOversizePayloadAndHTTPSDowngrade(t *testing.T) {
 	}
 }
 
+func TestDownloadRejectsEmbeddedURLCredentials(t *testing.T) {
+	err := DownloadVerified(context.Background(), DownloadRequest{
+		URL: "https://user:password@example.com/asset", Output: filepath.Join(t.TempDir(), "asset"), SHA256: strings.Repeat("a", 64),
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "embedded credentials") {
+		t.Fatalf("credential-bearing download URL was not rejected: %v", err)
+	}
+}
+
+func TestDownloadFailureDoesNotEchoURLCredentials(t *testing.T) {
+	secret := "password123"
+	_, err := DownloadWithFallback(context.Background(), DownloadRequest{
+		Output: filepath.Join(t.TempDir(), "asset"), SHA256: strings.Repeat("a", 64), Retries: 0,
+	}, []DownloadSource{{URL: "https://user:" + secret + "@example.invalid/asset"}}, nil)
+	if err == nil || strings.Contains(err.Error(), secret) {
+		t.Fatalf("download failure echoed URL credentials: %v", err)
+	}
+}
+
 func TestDownloadRejectsPlainHTTPEvenWithPinnedSHA256(t *testing.T) {
 	payload := []byte("pinned but not transported over TLS")
 	sum := sha256.Sum256(payload)

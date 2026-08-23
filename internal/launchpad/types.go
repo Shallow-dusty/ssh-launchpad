@@ -156,6 +156,7 @@ type FirewallState struct {
 	BroadExposure        bool     `json:"broadExposure"`
 	ConflictingRules     []string `json:"conflictingRules,omitempty"`
 	UnresolvedBroadRules []string `json:"unresolvedBroadRules,omitempty"`
+	PortRangeRules       []string `json:"portRangeRules,omitempty"`
 }
 
 type TransportState struct {

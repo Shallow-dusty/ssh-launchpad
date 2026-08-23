@@ -67,6 +67,34 @@ func TestValidatePublicKeyRejectsFakeBase64AndAcceptsParsedKey(t *testing.T) {
 	}
 }
 
+func TestProfileRejectsCredentialBearingMirrorURLs(t *testing.T) {
+	profile := DefaultProfile()
+	profile.Download.Strategy = "mirror"
+	profile.Download.MirrorBaseURL = "https://user:password@example.com/releases"
+	if err := profile.Validate(); err == nil {
+		t.Fatal("mirror URL with embedded credentials was accepted")
+	}
+}
+
+func TestProfileAcceptsSupportedProxySchemes(t *testing.T) {
+	profile := DefaultProfile()
+	profile.Download.Strategy = "proxy"
+	for _, value := range []string{"http://127.0.0.1:8080", "https://proxy.example:8443"} {
+		profile.Download.ProxyURL = value
+		if err := profile.Validate(); err != nil {
+			t.Fatalf("proxy %q rejected: %v", value, err)
+		}
+	}
+	profile.Download.ProxyURL = "socks5://127.0.0.1:1080"
+	if err := profile.Validate(); err == nil {
+		t.Fatal("unsupported SOCKS5 proxy URL was accepted")
+	}
+	profile.Download.ProxyURL = "https://"
+	if err := profile.Validate(); err == nil {
+		t.Fatal("proxy URL without a host was accepted")
+	}
+}
+
 func TestProfileValidationAcceptsOnlyTailnetAuthKeys(t *testing.T) {
 	profile := DefaultProfile()
 	profile.Transport.AuthKey = "tskey-" + "auth-example-once"

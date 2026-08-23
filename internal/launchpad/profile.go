@@ -190,9 +190,8 @@ func (p Profile) Validate() error {
 		}
 	}
 	if p.Download.Strategy == "proxy" {
-		u, err := url.Parse(p.Download.ProxyURL)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5") {
-			errs = append(errs, errors.New("proxyUrl must use http, https, or socks5"))
+		if err := validateProxyURL(p.Download.ProxyURL); err != nil {
+			errs = append(errs, fmt.Errorf("proxyUrl: %w", err))
 		}
 	}
 	if p.Download.Strategy == "offline" {
@@ -227,8 +226,19 @@ func validateHTTPSURL(raw string) error {
 	if err != nil {
 		return err
 	}
-	if u.Scheme != "https" || u.Host == "" {
-		return errors.New("must be an absolute HTTPS URL")
+	if u.Scheme != "https" || u.Host == "" || u.User != nil {
+		return errors.New("must be an absolute HTTPS URL without embedded credentials")
+	}
+	return nil
+}
+
+func validateProxyURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return err
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return errors.New("must be an absolute HTTP or HTTPS proxy URL")
 	}
 	return nil
 }

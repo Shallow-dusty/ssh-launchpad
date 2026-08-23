@@ -2,14 +2,14 @@ import "./styles.css";
 import { detectLanguage, translate, type Language, type MessageKey } from "./i18n";
 import {
   animateFromCurrent, announce, checked, delay, downloadText, escapeAttribute,
-  escapeHtml, setText, valueOf
+  setText, valueOf
 } from "./browser-utils";
-import { launchIcon, shieldIcon, themeIcon } from "./icons";
+import { launchIcon, themeIcon } from "./icons";
 import { mockActions, mockPublicKey, mockRun } from "./mock-backend";
 import { isNewerVersion, profileToYAML, redactReport } from "./model-utils";
 import {
-  renderAdvanced, renderConfirmActions, renderHome, renderWizard, simpleEvent,
-  type InstallState, type WizardMode
+  checkIssues, confirmAckKey, renderAdvanced, renderConfirmActions, renderHome,
+  renderWizard, simpleEvent, type InstallState, type WizardMode
 } from "./views";
 import type { DesktopRequest, ElevatedJob, PersonalCard, Profile, PublicKeyInfo, Report, Stage } from "./types";
 import { APP_VERSION } from "./version";
@@ -54,6 +54,9 @@ const state: {
   verifyError: string;
   activeJob?: ElevatedJob;
   toast: string;
+  showNetwork: boolean;
+  showKey: boolean;
+  keyAttempted: boolean;
 } = {
   language: detectLanguage(),
   view: "home",
@@ -74,7 +77,10 @@ const state: {
   installError: "",
   checkError: "",
   verifyError: "",
-  toast: ""
+  toast: "",
+  showNetwork: false,
+  showKey: false,
+  keyAttempted: false
 };
 
 const t = (key: MessageKey, values: Record<string, string | number> = {}) => translate(state.language, key, values);
@@ -104,9 +110,16 @@ function normalizeProfile(profile: Profile): Profile {
   };
 }
 
+// Theme: stored choice wins; otherwise follow the operating system.
+function initialTheme(): string {
+  const saved = localStorage.getItem("ssh-launchpad-theme");
+  if (saved === "dark" || saved === "light") return saved;
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 async function initialise(): Promise<void> {
   document.documentElement.lang = state.language;
-  document.documentElement.dataset.theme = localStorage.getItem("ssh-launchpad-theme") ?? "";
+  document.documentElement.dataset.theme = initialTheme();
   if (window.go?.main?.App) {
     try {
       state.profile = await window.go.main.App.DefaultProfile();
@@ -124,15 +137,14 @@ async function initialise(): Promise<void> {
     }
   }
   state.profile = normalizeProfile(state.profile);
+  // Engine events are announcement-only; rendering is driven by the job poll
+  // (real backend) or by the mock itself, so there is a single render driver
+  // per path and no double DOM rebuilds.
   window.runtime?.EventsOn("launchpad:event", (event) => {
-    state.progress.push(event);
     announce(simpleEvent(state.language, event));
-    if (state.view === "wizard" && state.step === 1) renderPage();
   });
   window.runtime?.EventsOn("launchpad:second-instance", () => {
-    showToast(state.language === "zh-CN"
-      ? "SSH Launchpad 已经在运行；已把这个窗口带到前台。"
-      : "SSH Launchpad is already running; this window was brought to the front.");
+    showToast(t("secondInstance"));
   });
   buildShell();
   renderPage();
@@ -141,14 +153,16 @@ async function initialise(): Promise<void> {
 function buildShell(): void {
   document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
     <div class="app-shell">
-      <header class="app-header material">
+      <header class="app-header">
         <button class="brand-button" id="brand-home" aria-label="${escapeAttribute(t("backHome"))}">
           <span class="brand-mark" aria-hidden="true">${launchIcon()}</span>
           <span><strong>${t("appName")}</strong><small>${t("appTagline")}</small></span>
         </button>
         <div class="header-actions">
-          <span class="backend-pill ${state.backend ? "online" : ""}">${state.backend ? t("backendNative") : t("backendDemo")}</span>
-          <label class="language-select"><span class="sr-only">${t("language")}</span><select id="language" aria-label="${t("language")}"><option value="zh-CN" ${state.language === "zh-CN" ? "selected" : ""}>中文</option><option value="en" ${state.language === "en" ? "selected" : ""}>English</option></select></label>
+          ${state.backend ? "" : `<span class="preview-pill">${t("previewMode")}</span>`}
+          <div class="lang-switch" role="group" aria-label="${t("languageLabel")}">
+            <button id="lang-zh" class="lang-option ${state.language === "zh-CN" ? "active" : ""}" aria-pressed="${state.language === "zh-CN"}">中文</button><button id="lang-en" class="lang-option ${state.language === "en" ? "active" : ""}" aria-pressed="${state.language === "en"}">EN</button>
+          </div>
           <button class="icon-button" id="theme-toggle" aria-label="${t("theme")}">${themeIcon()}</button>
         </div>
       </header>
@@ -156,29 +170,27 @@ function buildShell(): void {
         <div id="announcer" class="sr-only" aria-live="polite"></div>
         <section id="view" class="view"></section>
       </main>
-      <div id="toast" class="toast ${state.toast ? "show" : ""}" role="status">${escapeHtml(state.toast)}</div>
+      <div id="toast" class="toast ${state.toast ? "show" : ""}" role="status">${escapeHtmlText(state.toast)}</div>
     </div>
     <dialog id="install-dialog" aria-labelledby="install-dialog-title">
       <form method="dialog" class="dialog-card">
-        <div class="dialog-symbol warning" aria-hidden="true">${shieldIcon()}</div>
         <h2 id="install-dialog-title">${t("confirmTitle")}</h2>
         <p class="muted">${t("confirmBody")}</p>
         <div id="confirm-actions" class="confirm-list"></div>
-        <label class="check-row"><input id="confirm-ack" type="checkbox" /><span>${t("confirmAck")}</span></label>
+        <label class="check-row"><input id="confirm-ack" type="checkbox" /><span id="confirm-ack-label"></span></label>
         <div class="dialog-actions">
-          <button value="cancel" class="button secondary">${t("cancel")}</button>
-          <button id="confirm-install" value="default" class="button primary" disabled>${t("confirmInstall")}</button>
+          <button value="cancel" class="button secondary">${t("confirmStay")}</button>
+          <button id="confirm-install" value="default" class="button primary" disabled>${t("confirmGo")}</button>
         </div>
       </form>
     </dialog>
     <dialog id="confirm-dialog" aria-labelledby="confirm-dialog-title">
       <form method="dialog" class="dialog-card">
-        <div class="dialog-symbol warning" aria-hidden="true">${shieldIcon()}</div>
         <h2 id="confirm-dialog-title"></h2>
         <p class="muted" id="confirm-dialog-body"></p>
         <div class="dialog-actions">
-          <button value="cancel" class="button secondary">${t("cancel")}</button>
-          <button value="ok" class="button primary">${t("confirmInstall")}</button>
+          <button value="cancel" class="button secondary">${t("confirmStay")}</button>
+          <button value="ok" class="button primary">${t("confirmGo")}</button>
         </div>
       </form>
     </dialog>
@@ -186,13 +198,18 @@ function buildShell(): void {
     <input id="card-file" class="sr-only" type="file" accept=".sshlaunchpad-card,.json" />
     <input id="key-file" class="sr-only" type="file" accept=".pub,.txt" />
   `;
+  document.querySelector<HTMLElement>(".skip-link")!.textContent = t("skipToContent");
   bindGlobalEvents();
+}
+
+function escapeHtmlText(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 function bindGlobalEvents(): void {
   document.querySelector("#brand-home")?.addEventListener("click", goHome);
-  document.querySelector<HTMLSelectElement>("#language")?.addEventListener("change", (event) => {
-    const language = (event.currentTarget as HTMLSelectElement).value as Language;
+  const switchLanguage = (language: Language) => {
+    if (language === state.language) return;
     state.language = language;
     localStorage.setItem("ssh-launchpad-language", language);
     document.documentElement.lang = language;
@@ -200,7 +217,9 @@ function bindGlobalEvents(): void {
     buildShell();
     renderPage();
     announce(language === "zh-CN" ? "已切换为中文" : "Switched to English");
-  });
+  };
+  document.querySelector("#lang-zh")?.addEventListener("click", () => switchLanguage("zh-CN"));
+  document.querySelector("#lang-en")?.addEventListener("click", () => switchLanguage("en"));
   document.querySelector("#theme-toggle")?.addEventListener("click", () => {
     const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = next;
@@ -231,52 +250,47 @@ function renderPage(): void {
 }
 
 function bindPageEvents(): void {
-  document.querySelectorAll<HTMLElement>("[data-task]").forEach((button) => button.addEventListener("click", () => {
-    const task = button.dataset.task;
-    if (task === "advanced") {
-      state.view = "advanced";
-      renderPage();
-      return;
-    }
-    startWizard(task === "repair" ? "repair" : "setup");
-  }));
+  document.querySelector("#hero-start")?.addEventListener("click", () => startWizard("setup"));
+  document.querySelector("#repair-link")?.addEventListener("click", () => startWizard("repair"));
+  document.querySelector("#card-import-link")?.addEventListener("click", () => void importPersonalCard());
+  document.querySelector("#advanced-link")?.addEventListener("click", () => { state.view = "advanced"; renderPage(); });
   document.querySelector("#wizard-back")?.addEventListener("click", goHome);
   document.querySelector("#advanced-back")?.addEventListener("click", goHome);
   document.querySelector("#run-check")?.addEventListener("click", () => void runCheck());
-  document.querySelector("#check-continue")?.addEventListener("click", () => void enterPlanStep());
+  document.querySelector("#check-continue")?.addEventListener("click", () => void onCheckContinue());
   document.querySelector("#plan-back")?.addEventListener("click", () => { state.step = 0; state.installState = "idle"; renderPage(); });
   document.querySelector("#plan-retry")?.addEventListener("click", () => void runPlanStage());
+  document.querySelector("#change-network")?.addEventListener("click", () => {
+    state.showNetwork = !state.showNetwork;
+    renderPage();
+  });
+  document.querySelector("#change-key")?.addEventListener("click", () => {
+    state.showKey = !state.showKey;
+    renderPage();
+  });
   document.querySelectorAll<HTMLInputElement>('input[name="network-mode"]').forEach((input) => input.addEventListener("change", () => {
     setNetworkMode(input.value === "lan" ? "lan" : "tailnet");
   }));
   document.querySelectorAll<HTMLInputElement>('input[name="controller-key"]').forEach((input) => input.addEventListener("change", () => {
     state.selectedKey = state.detectedKeys[Number(input.value)];
     if (state.selectedKey) state.profile.ssh.publicKeys = [state.selectedKey.publicKey];
+    state.keyAttempted = false;
     void runPlanStage();
   }));
-  // Typing a key updates state and the install button without a full DOM
-  // rebuild (a rebuild would drop textarea focus); the plan itself is
-  // regenerated on change (blur), when the value settles.
-  document.querySelector<HTMLTextAreaElement>("#public-key")?.addEventListener("input", (event) => {
-    const value = (event.currentTarget as HTMLTextAreaElement).value.trim();
-    if (value) {
-      state.selectedKey = { label: t("pasteKey"), path: "", publicKey: value, generated: false };
-      state.profile.ssh.publicKeys = [value];
-    } else {
-      state.selectedKey = undefined;
-      state.profile.ssh.publicKeys = [];
-    }
-    setText("#key-error", value ? "" : t("keyRequired"));
-    const openButton = document.querySelector<HTMLButtonElement>("#open-install");
-    if (openButton) openButton.disabled = !value;
-  });
-  document.querySelector<HTMLTextAreaElement>("#public-key")?.addEventListener("change", (event) => {
-    if ((event.currentTarget as HTMLTextAreaElement).value.trim()) void runPlanStage();
-  });
+  bindPublicKeyInput();
   document.querySelector("#import-key")?.addEventListener("click", () => void importPublicKey());
   document.querySelector("#generate-key")?.addEventListener("click", () => void generatePublicKey());
   document.querySelector("#export-pairing")?.addEventListener("click", () => void exportPairing());
-  document.querySelector("#open-install")?.addEventListener("click", openInstallDialog);
+  document.querySelector("#open-install")?.addEventListener("click", () => {
+    // No key yet: open the picker panel instead of failing after the fact.
+    if (!state.selectedKey && !state.profile.ssh.publicKeys[0]) {
+      state.showKey = true;
+      renderPage();
+      document.querySelector<HTMLTextAreaElement>("#public-key")?.focus();
+      return;
+    }
+    openInstallDialog();
+  });
   document.querySelector("#test-now")?.addEventListener("click", () => void runVerify());
   document.querySelector("#verify-again")?.addEventListener("click", () => void runVerify());
   document.querySelector("#copy-command")?.addEventListener("click", copyConnectionCommand);
@@ -284,12 +298,7 @@ function bindPageEvents(): void {
   document.querySelector("#import-profile")?.addEventListener("click", () => void importProfile());
   document.querySelector("#export-profile")?.addEventListener("click", () => void exportProfile());
   bindAdvancedAutoApply();
-  document.querySelectorAll("#import-personal-card, #import-personal-card-advanced").forEach((button) => button.addEventListener("click", () => void importPersonalCard()));
-  document.querySelector("#create-personal-card")?.addEventListener("click", () => {
-    state.view = "advanced";
-    renderPage();
-    requestAnimationFrame(() => document.querySelector<HTMLInputElement>("#card-display-name")?.focus());
-  });
+  document.querySelector("#import-personal-card-advanced")?.addEventListener("click", () => void importPersonalCard());
   document.querySelector("#export-personal-card")?.addEventListener("click", () => void exportPersonalCard());
   document.querySelector("#advanced-check")?.addEventListener("click", () => void runAdvancedStage("check"));
   document.querySelector("#advanced-plan")?.addEventListener("click", () => void runAdvancedStage("plan"));
@@ -298,7 +307,44 @@ function bindPageEvents(): void {
   document.querySelector("#rollback-last")?.addEventListener("click", () => void rollbackLast());
 }
 
+// Pasted keys validate and rebuild the plan as the user settles (debounced),
+// instead of waiting for a blur — the page never sits stale after a paste.
+let keyInputTimer: ReturnType<typeof setTimeout> | undefined;
+function bindPublicKeyInput(): void {
+  const textarea = document.querySelector<HTMLTextAreaElement>("#public-key");
+  if (!textarea) return;
+  textarea.addEventListener("input", () => {
+    const value = textarea.value.trim();
+    clearTimeout(keyInputTimer);
+    if (!value) {
+      state.selectedKey = undefined;
+      state.profile.ssh.publicKeys = [];
+      state.keyAttempted = false;
+      void runPlanStage();
+      return;
+    }
+    keyInputTimer = setTimeout(() => {
+      void (async () => {
+        if (await publicKeyIsValid(value)) {
+          state.selectedKey = { label: t("pasteKey"), path: "", publicKey: value, generated: false };
+          state.profile.ssh.publicKeys = [value];
+          state.keyAttempted = false;
+          void runPlanStage();
+        } else {
+          state.keyAttempted = true;
+          state.selectedKey = undefined;
+          state.profile.ssh.publicKeys = [];
+          renderPage();
+          document.querySelector<HTMLTextAreaElement>("#public-key")?.focus();
+        }
+      })();
+    }, 450);
+  });
+}
+
 function startWizard(mode: WizardMode): void {
+  clearTimeout(keyInputTimer);
+  keyInputTimer = undefined;
   state.view = "wizard";
   state.mode = mode;
   state.step = 0;
@@ -311,12 +357,23 @@ function startWizard(mode: WizardMode): void {
   state.installError = "";
   state.checkError = "";
   state.verifyError = "";
+  state.showNetwork = false;
+  state.showKey = false;
+  state.keyAttempted = false;
   renderPage();
   void runCheck();
 }
 
-// The plan step drives itself: a detected key is preselected (setup mode),
-// the plan builds automatically, and any later input change rebuilds it.
+async function onCheckContinue(): Promise<void> {
+  // A machine with nothing to fix (or a healthy repair diagnosis) skips the
+  // prepare step and goes straight to verification — matching the CTA label.
+  if (state.report?.snapshot && checkIssues(state.report.snapshot, state.profile).length === 0) {
+    await runVerify();
+    return;
+  }
+  await enterPlanStep();
+}
+
 async function enterPlanStep(): Promise<void> {
   state.step = 1;
   state.installState = "idle";
@@ -326,6 +383,9 @@ async function enterPlanStep(): Promise<void> {
     state.selectedKey = firstDetected;
     state.profile.ssh.publicKeys = [firstDetected.publicKey];
   }
+  // The key picker opens on its own only when a key is genuinely missing.
+  state.showKey = state.mode === "setup" && !state.selectedKey && !state.profile.ssh.publicKeys[0];
+  state.showNetwork = false;
   await runPlanStage();
 }
 
@@ -360,6 +420,14 @@ async function runCheck(): Promise<void> {
   renderPage();
   try {
     state.report = await runStage("check");
+    // Match the CLI wizard's guided default: a fresh recommended setup may
+    // install the optional transport during the reviewed Apply. Imported
+    // profiles and setup cards keep their explicit install choice.
+    const guidedDefault = state.profile.name === "recommended" || state.profile.name === "default";
+    if (state.mode === "setup" && guidedDefault && state.profile.transport.mode === "tailnet"
+      && !state.report.snapshot?.tailscale.installed) {
+      state.profile.transport.install = true;
+    }
   } catch (error) {
     state.checkError = friendlyError(error);
   } finally {
@@ -390,6 +458,7 @@ async function publicKeyIsValid(key: string): Promise<boolean> {
 
 function openInstallDialog(): void {
   document.querySelector("#confirm-actions")!.innerHTML = renderConfirmActions(state, t);
+  setText("#confirm-ack-label", t(confirmAckKey(state)));
   const ack = document.querySelector<HTMLInputElement>("#confirm-ack")!;
   ack.checked = false;
   document.querySelector<HTMLButtonElement>("#confirm-install")!.disabled = true;
@@ -431,14 +500,11 @@ async function beginSafeInstall(): Promise<void> {
 
 async function pollElevatedJob(id: string): Promise<void> {
   const deadline = Date.now() + 30 * 60 * 1000;
-  // Rendering is event-driven: a full DOM rebuild every poll tick would steal
-  // focus, reset scroll, and spam the aria-live region, so only re-render
-  // when the job state or the event count actually changes.
   let renderedFingerprint = "";
   while (true) {
     if (Date.now() > deadline) {
       state.installState = "failed";
-      state.installError = state.language === "zh-CN" ? "安装状态等待超过 30 分钟。管理员进程可能仍在运行；请先检查任务管理器，再重新打开应用检查。" : "Install status timed out after 30 minutes. The elevated process may still be running; inspect it before reopening the app and checking again.";
+      state.installError = t("installTimeout");
       renderPage();
       return;
     }
@@ -463,7 +529,7 @@ async function pollElevatedJob(id: string): Promise<void> {
 function finishElevatedJob(job: ElevatedJob): void {
   if (job.state === "cancelled") {
     state.installState = "cancelled";
-    state.installError = job.error ?? t("cancelledUAC");
+    state.installError = "";
     renderPage();
     return;
   }
@@ -480,6 +546,7 @@ function finishElevatedJob(job: ElevatedJob): void {
 }
 
 async function runVerify(): Promise<void> {
+  if (state.busy) return;
   state.step = 2;
   state.busy = true;
   state.verifyError = "";
@@ -503,6 +570,7 @@ async function runStage(stage: Stage): Promise<Report> {
 }
 
 async function runAdvancedStage(stage: "check" | "plan"): Promise<void> {
+  if (state.busy) return;
   state.busy = true;
   try {
     state.report = await runStage(stage);
@@ -541,6 +609,7 @@ async function generatePublicKey(): Promise<void> {
 function selectKey(key: PublicKeyInfo): void {
   state.selectedKey = key;
   state.profile.ssh.publicKeys = [key.publicKey];
+  state.keyAttempted = false;
   if (!state.detectedKeys.some((existing) => existing.publicKey === key.publicKey)) state.detectedKeys.push(key);
   renderPage();
   if (state.view === "wizard" && state.step === 1) void runPlanStage();
@@ -608,11 +677,11 @@ async function exportPersonalCard(): Promise<void> {
   }
   if (window.go?.main?.App) {
     const path = await window.go.main.App.ExportPersonalCard(card);
-    if (path) showToast(t("personalCardExported"));
+    if (path) showToast(t("cardExported"));
     return;
   }
   downloadText(`${safeCardFilename(card.displayName)}.sshlaunchpad-card`, `${JSON.stringify(card, null, 2)}\n`, "application/json;charset=utf-8");
-  showToast(t("personalCardExported"));
+  showToast(t("cardExported"));
 }
 
 function buildPersonalCard(): PersonalCard {
@@ -667,41 +736,41 @@ async function applyPersonalCard(card: PersonalCard): Promise<void> {
     }
   });
   const firstKey = card.ssh.publicKeys[0]!;
-  state.selectedKey = { label: card.controllerName?.trim() || t("personalCardTitle"), path: "", publicKey: firstKey, generated: false };
+  state.selectedKey = { label: card.controllerName?.trim() || t("cardTitle"), path: "", publicKey: firstKey, generated: false };
   for (const publicKey of card.ssh.publicKeys) {
     if (!state.detectedKeys.some((existing) => existing.publicKey === publicKey)) {
-      state.detectedKeys.push({ label: card.controllerName?.trim() || t("personalCardTitle"), path: "", publicKey, generated: false });
+      state.detectedKeys.push({ label: card.controllerName?.trim() || t("cardTitle"), path: "", publicKey, generated: false });
     }
   }
-  showToast(t("personalCardImported"));
+  showToast(t("cardImported"));
   startWizard("setup");
 }
 
 async function validatePersonalCardClient(card: PersonalCard): Promise<string> {
-  if (card.schemaVersion !== 1 || card.kind !== "ssh-launchpad-personal-card") return t("personalCardInvalid");
-  if (!card.displayName?.trim() || card.displayName.trim().length > 128) return t("cardDisplayNameRequired");
-  if (!Number.isInteger(card.ssh?.port) || card.ssh.port < 1 || card.ssh.port > 65535) return t("personalCardInvalid");
-  if (!Array.isArray(card.ssh?.publicKeys) || card.ssh.publicKeys.length === 0) return t("keyRequired");
+  if (card.schemaVersion !== 1 || card.kind !== "ssh-launchpad-personal-card") return t("cardInvalid");
+  if (!card.displayName?.trim() || card.displayName.trim().length > 128) return t("cardNameRequired");
+  if (card.controllerName && card.controllerName.length > 128) return t("cardInvalid");
+  if (card.note && card.note.length > 1024) return t("cardInvalid");
+  if (!Number.isInteger(card.ssh?.port) || card.ssh.port < 1 || card.ssh.port > 65535) return t("cardInvalid");
+  if (!Array.isArray(card.ssh?.publicKeys) || card.ssh.publicKeys.length === 0 || card.ssh.publicKeys.length > 128) return t("keyMissingTitle");
   for (const key of card.ssh.publicKeys) {
-    if (key.includes("PRIVATE KEY") || !(await publicKeyIsValid(key))) return t("personalCardInvalid");
+    if (key.includes("PRIVATE KEY") || !(await publicKeyIsValid(key))) return t("cardInvalid");
   }
-  if (!["tailnet", "lan"].includes(card.tailscale?.mode)) return t("personalCardInvalid");
-  if (card.tailscale.mode === "lan" && card.tailscale.authKey) return t("personalCardInvalid");
-  if (card.tailscale.authKey && (!card.tailscale.authKey.startsWith("tskey-auth-") || /[\r\n\0]/.test(card.tailscale.authKey))) return t("personalCardInvalid");
+  if (!["tailnet", "lan"].includes(card.tailscale?.mode)) return t("cardInvalid");
+  if (card.tailscale.mode === "lan" && card.tailscale.authKey) return t("cardInvalid");
+  if (card.tailscale.authKey && (card.tailscale.authKey.length > 4096 || !card.tailscale.authKey.startsWith("tskey-auth-") || /[\r\n\0]/.test(card.tailscale.authKey))) return t("cardInvalid");
   return "";
 }
 
 function safeCardFilename(value: string): string {
-  return value.trim().replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").replace(/[. ]+$/g, "") || "ssh-launchpad-personal";
+  return value.trim().replace(/[<>:"/\\|?*\x00-\x1f]/g, "-").replace(/[. ]+$/g, "") || "ssh-launchpad-setup";
 }
 
 // Advanced settings apply live: every field writes straight into state on
-// input, so there is no save button and no hidden save side effect inside
-// Check / Plan / Export actions. #advanced-status is a plain (non-live)
-// region, so per-keystroke updates stay quiet for screen readers.
+// input, so there is no save button and no hidden save side effect.
 function bindAdvancedAutoApply(): void {
   if (!document.querySelector("#target-platform")) return;
-  const applied = () => setText("#advanced-status", t("advancedSaved"));
+  const applied = () => setText("#advanced-status", t("applied"));
   const onInput = (id: string, apply: (value: string) => void) => {
     document.querySelector(`#${id}`)?.addEventListener("input", (event) => {
       apply((event.currentTarget as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).value);
@@ -741,7 +810,7 @@ function syncTransport(): void {
 
 async function exportReport(): Promise<void> {
   if (!state.report) {
-    showToast(t("noChanges"));
+    showToast(t("reportMissing"));
     return;
   }
   if (window.go?.main?.App) {
@@ -764,13 +833,10 @@ async function checkForUpdate(): Promise<void> {
           return { currentVersion: APP_VERSION, latestVersion: latest, available: isNewerVersion(latest, APP_VERSION), url: value.html_url, channel: "stable" };
         });
     if (info.available) {
-      const message = state.language === "zh-CN"
-        ? `发现稳定版 ${info.latestVersion}。只打开下载页，不会静默更新系统组件。`
-        : `Stable ${info.latestVersion} is available. Only the download page will open; system components are never silently updated.`;
-      showToast(message);
+      showToast(t("updateAvailable", { version: info.latestVersion }));
       window.open(info.url, "_blank", "noopener,noreferrer");
     } else {
-      showToast(state.language === "zh-CN" ? "当前已是最新稳定版。" : "You have the latest stable version.");
+      showToast(t("updateLatest"));
     }
   } catch (error) {
     showToast(friendlyError(error));
@@ -783,7 +849,7 @@ async function rollbackLast(): Promise<void> {
   try {
     const report = await window.go.main.App.Rollback(state.report.journalPath);
     state.report = report;
-    showToast(report.success ? t("ready") : t("errorGeneric"));
+    showToast(report.success ? t("verdictReady") : t("errorGeneric"));
     renderPage();
   } catch (error) {
     showToast(friendlyError(error));
@@ -801,7 +867,7 @@ function importProfileFromBrowser(event: Event): void {
       showToast(t("profileImported"));
       renderPage();
     } catch {
-      showToast(state.language === "zh-CN" ? "浏览器预览仅导入 JSON；桌面应用支持 YAML 和 JSON。" : "Browser preview imports JSON; the desktop app supports YAML and JSON.");
+      showToast(t("browserJsonOnly"));
     }
   });
 }
@@ -813,13 +879,13 @@ function importPersonalCardFromBrowser(event: Event): void {
   void file.text().then(async (text) => {
     try {
       if (text.includes("PRIVATE KEY")) {
-        throw new Error(state.language === "zh-CN" ? "拒绝导入私钥。个人信息卡只能包含公钥。" : "Private keys are rejected. A personal card may contain public keys only.");
+        throw new Error(t("keyRejectedPrivate"));
       }
       const card = JSON.parse(text) as PersonalCard;
       await applyPersonalCard(card);
     } catch (error) {
       const message = friendlyError(error);
-      showToast(message === t("errorGeneric") ? t("personalCardInvalid") : message);
+      showToast(message === t("errorGeneric") ? t("cardInvalid") : message);
     } finally {
       input.value = "";
     }
@@ -831,7 +897,7 @@ function importKeyFromBrowser(event: Event): void {
   if (!file) return;
   void file.text().then(async (text) => {
     if (text.includes("PRIVATE KEY")) {
-      showToast(state.language === "zh-CN" ? "拒绝导入私钥。请选择 .pub 公钥文件。" : "Private keys are rejected. Choose a .pub file.");
+      showToast(t("keyRejectedPrivate"));
       return;
     }
     for (const candidate of text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)) {
@@ -840,21 +906,40 @@ function importKeyFromBrowser(event: Event): void {
         return;
       }
     }
-    showToast(t("keyRequired"));
+    state.keyAttempted = true;
+    renderPage();
   });
 }
 
 async function copyConnectionCommand(): Promise<void> {
-  const code = document.querySelector<HTMLElement>(".copy-box code")?.textContent ?? "";
-  await navigator.clipboard.writeText(code);
-  showToast(t("copied"));
+  const code = document.querySelector<HTMLElement>(".command-box code")?.textContent ?? "";
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(code);
+    } else {
+      const fallback = document.createElement("textarea");
+      fallback.value = code;
+      fallback.setAttribute("readonly", "true");
+      fallback.style.position = "fixed";
+      fallback.style.opacity = "0";
+      document.body.appendChild(fallback);
+      fallback.select();
+      if (!document.execCommand("copy")) throw new Error("clipboard unavailable");
+      fallback.remove();
+    }
+    showToast(t("copied"));
+  } catch {
+    showToast(t("errorGeneric"));
+  }
 }
 
 function goHome(): void {
   if (state.installState === "waiting-for-permission" || state.installState === "running") {
-    showToast(state.language === "zh-CN" ? "安装仍在进行，请等待完成后再离开。" : "Installation is still running. Wait for it to finish before leaving.");
+    showToast(t("installingBody"));
     return;
   }
+  clearTimeout(keyInputTimer);
+  keyInputTimer = undefined;
   state.view = "home";
   state.step = 0;
   state.installState = "idle";
@@ -868,7 +953,7 @@ async function mockElevatedApply(request: DesktopRequest): Promise<ElevatedJob> 
   const mode = new URLSearchParams(location.search).get("mock");
   const attempt = Number(sessionStorage.getItem("ssh-launchpad-mock-attempt") ?? "0") + 1;
   sessionStorage.setItem("ssh-launchpad-mock-attempt", String(attempt));
-  if (mode === "uac-cancel" && attempt === 1) return { id: "mock", state: "cancelled", error: t("cancelledUAC") };
+  if (mode === "uac-cancel" && attempt === 1) return { id: "mock", state: "cancelled", error: t("installCancelled") };
   if (mode === "fail" && attempt === 1) return { id: "mock", state: "failed", error: state.language === "zh-CN" ? "模拟：网络中断，校验失败，电脑没有继续改动。" : "Simulated network interruption; verification failed and later changes stopped." };
   state.installState = "running";
   for (const action of mockActions(request.profile.ssh.port)) {
@@ -928,8 +1013,8 @@ function friendlyReportError(raw: string, report?: Report): string {
 
 function friendlyError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error ?? "");
-  if (/checksum|sha256/i.test(raw)) return state.language === "zh-CN" ? "下载文件校验失败，没有执行安装。请重试或改用已验证的离线包。" : "Download verification failed. Nothing was installed; retry or use a verified offline bundle.";
-  if (/network|timeout|resolve|dns/i.test(raw)) return state.language === "zh-CN" ? "网络暂时不可用。可检查代理、改用官方镜像或离线包后重试。" : "Network unavailable. Check proxy settings, use an explicit trusted mirror, or retry with an offline bundle.";
+  if (/checksum|sha256/i.test(raw)) return t("errorDownload");
+  if (/network|timeout|resolve|dns/i.test(raw)) return t("errorNetwork");
   return raw || t("errorGeneric");
 }
 

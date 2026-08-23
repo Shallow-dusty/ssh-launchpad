@@ -4,6 +4,9 @@ import type { DesktopRequest, PlanAction, PublicKeyInfo, Report, Snapshot } from
 export async function mockRun(request: DesktopRequest): Promise<Report> {
   await delay(180);
   const configured = localStorage.getItem("ssh-launchpad-demo-ready") === "true";
+  const mode = new URLSearchParams(location.search).get("mock");
+  const unsafeFirewall = mode === "unsafe-firewall";
+  const tailnetOffline = mode === "tailnet-offline" && request.profile.transport.mode === "tailnet";
   const snapshot: Snapshot = {
     platform: "windows",
     arch: "amd64",
@@ -27,11 +30,14 @@ export async function mockRun(request: DesktopRequest): Promise<Report> {
     authorizedKeysChecked: true,
     authorizedKeysMatch: configured,
     authorizedKeysCount: configured ? 1 : 0,
-    firewall: { checked: true, enabled: true, provider: "windows-firewall", ports: configured ? [request.profile.ssh.port] : [], scopes: configured ? ["100.64.0.0/10", "fd7a:115c:a1e0::/48"] : [] },
-    tailscale: { installed: true, online: true, ip: "100.64.10.25", state: "Running" },
+    firewall: { checked: true, enabled: true, provider: "windows-firewall", ports: configured ? [request.profile.ssh.port] : [], scopes: configured ? ["100.64.0.0/10", "fd7a:115c:a1e0::/48", ...(unsafeFirewall ? ["192.168.1.0/24"] : [])] : [] },
+    tailscale: { installed: true, online: !tailnetOffline, ip: "100.64.10.25", state: tailnetOffline ? "Stopped" : "Running" },
     network: { githubDns: true, tailscaleDns: true, proxySet: false, lanIps: ["192.168.1.25"], lanScopes: ["192.168.1.0/24"] }
   };
   const actions = configured ? [] : mockActions(request.profile.ssh.port);
+  const blockers = request.stage === "plan" && tailnetOffline
+    ? ["Tailnet exposure is selected, but Tailscale is not online."]
+    : [];
   return {
     id: `${request.stage}-${Date.now()}`,
     stage: request.stage,
@@ -39,7 +45,7 @@ export async function mockRun(request: DesktopRequest): Promise<Report> {
     exitCode: request.stage === "verify" && !configured ? 3 : 0,
     profileName: request.profile.name,
     snapshot,
-    plan: { digest: `mock-${request.profile.ssh.port}-${actions.length}`, noChanges: actions.length === 0, highestRisk: actions.length ? "high" : "low", selfCutDetected: false, actions }
+    plan: { digest: `mock-${request.profile.ssh.port}-${actions.length}-${blockers.length}`, noChanges: actions.length === 0 && blockers.length === 0, highestRisk: actions.length ? "high" : "low", selfCutDetected: false, actions, blockers }
   };
 }
 

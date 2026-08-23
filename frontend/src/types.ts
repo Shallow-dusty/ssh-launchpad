@@ -55,7 +55,7 @@ export interface Snapshot {
   authorizedKeysChecked: boolean;
   authorizedKeysMatch: boolean;
   authorizedKeysCount: number;
-  firewall: { checked: boolean; enabled: boolean; provider?: string; ports?: number[]; scopes?: string[]; broadExposure?: boolean; conflictingRules?: string[]; unresolvedBroadRules?: string[] };
+  firewall: { checked: boolean; enabled: boolean; provider?: string; ports?: number[]; scopes?: string[]; broadExposure?: boolean; conflictingRules?: string[]; unresolvedBroadRules?: string[]; portRangeRules?: string[] };
   tailscale: { installed: boolean; online: boolean; ip?: string; state?: string };
   network: { githubDns: boolean; tailscaleDns: boolean; proxySet: boolean; lanIps?: string[]; lanScopes?: string[] };
   warnings?: string[];

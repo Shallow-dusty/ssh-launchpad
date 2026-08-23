@@ -362,7 +362,10 @@ func scheduledCommand(command []string, delay int, actionID string) ([]string, e
 	}
 	shell := shellJoin(command)
 	payload := shQuote(shell)
-	script := fmt.Sprintf("if command -v systemd-run >/dev/null 2>&1; then systemd-run --unit=%s --on-active=%ds --collect /bin/sh -c %s; else nohup /bin/sh -c %s >/tmp/%s.log 2>&1 </dev/null & fi", shQuote("ssh-launchpad-"+taskID), delay, payload, shQuote(fmt.Sprintf("sleep %d; exec %s", delay, shell)), shQuote("ssh-launchpad-"+taskID))
+	pidFile := filepath.Join(os.TempDir(), "ssh-launchpad-"+taskID+".pid")
+	logFile := filepath.Join(os.TempDir(), "ssh-launchpad-"+taskID+".log")
+	fallback := fmt.Sprintf(`pidfile=%s; logfile=%s; if [ -e "$pidfile" ] || [ -L "$pidfile" ]; then echo 'a delayed SSH Launchpad action is already scheduled' >&2; exit 1; fi; (set -C; : > "$logfile") || { rm -f "$logfile"; exit 1; }; nohup /bin/sh -c %s >> "$logfile" 2>&1 </dev/null & pid=$!; if [ -e "$pidfile" ] || [ -L "$pidfile" ] || ! (set -C; printf '%%s\\n' "$pid" > "$pidfile"); then kill "$pid" 2>/dev/null || true; exit 1; fi`, shQuote(pidFile), shQuote(logFile), shQuote(fmt.Sprintf("trap 'rm -f %s %s' EXIT HUP INT TERM; sleep %d; exec %s", shQuote(pidFile), shQuote(logFile), delay, shell)))
+	script := fmt.Sprintf("if command -v systemd-run >/dev/null 2>&1; then systemd-run --unit=%s --on-active=%ds --collect /bin/sh -c %s; else set -eu; %s; fi", shQuote("ssh-launchpad-"+taskID), delay, payload, fallback)
 	return unixCommand(script), nil
 }
 
@@ -372,7 +375,8 @@ func cancelScheduledCommand(actionID string) []string {
 		return psCommand(fmt.Sprintf(`Unregister-ScheduledTask -TaskName 'SSH-Launchpad-%s' -Confirm:$false -ErrorAction SilentlyContinue`, taskID))
 	}
 	unit := shQuote("ssh-launchpad-" + taskID)
-	return unixCommand(fmt.Sprintf("if command -v systemctl >/dev/null 2>&1; then systemctl stop %s.timer %s.service 2>/dev/null || true; systemctl reset-failed %s.timer %s.service 2>/dev/null || true; fi", unit, unit, unit, unit))
+	pidFile := shQuote(filepath.Join(os.TempDir(), "ssh-launchpad-"+taskID+".pid"))
+	return unixCommand(fmt.Sprintf("if command -v systemd-run >/dev/null 2>&1; then systemctl stop %s.timer %s.service 2>/dev/null || true; systemctl reset-failed %s.timer %s.service 2>/dev/null || true; else pidfile=%s; if [ -L \"$pidfile\" ]; then exit 1; fi; if [ -f \"$pidfile\" ]; then pid=$(cat \"$pidfile\"); case \"$pid\" in ''|*[!0-9]*) exit 1;; esac; kill \"$pid\" 2>/dev/null || true; rm -f \"$pidfile\"; fi; fi", unit, unit, unit, unit, pidFile))
 }
 
 func preflightExternalVerify(target string) error {
