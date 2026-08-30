@@ -132,3 +132,9 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.13.0
       - name: Build desktop
         run: wails build -clean -platform windows/amd64
+      - name: Upload Windows desktop build
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: windows-desktop-build
+          path: build/bin/
+          if-no-files-found: error
