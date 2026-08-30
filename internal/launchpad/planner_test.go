@@ -80,6 +80,31 @@ func TestPlannerDetectsSelfCut(t *testing.T) {
 	}
 }
 
+func TestAuthorizedKeysCommandsRejectSymlinkTargets(t *testing.T) {
+	profile := DefaultProfile()
+	profile.SSH.PublicKeys = []string{"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEB controller"}
+	snapshot := healthySnapshot(PlatformLinux)
+	snapshot.AuthorizedKeysMatch = false
+	plan := (Planner{}).Build(profile, snapshot)
+	for _, action := range plan.Actions {
+		if action.Operation != "configure_keys" {
+			continue
+		}
+		command := strings.Join(action.Command, " ")
+		rollback := strings.Join(action.RollbackCommand, " ")
+		for _, guard := range []string{"[ -L \"$ssh_dir\" ]", "[ -L \"$path\" ]", "mktemp", "set -C"} {
+			if !strings.Contains(command, guard) {
+				t.Fatalf("authorized_keys command lacks %q symlink-safe guard: %s", guard, command)
+			}
+		}
+		if !strings.Contains(rollback, "[ -L \"$path\" ]") || !strings.Contains(rollback, "[ -L \"$backup\" ]") {
+			t.Fatalf("authorized_keys rollback lacks symlink-safe guards: %s", rollback)
+		}
+		return
+	}
+	t.Fatal("configure_keys action missing")
+}
+
 func TestConfigureSSHRestartsOnlyAnAlreadyRunningService(t *testing.T) {
 	profile := DefaultProfile()
 	profile.SSH.Port = 2222
@@ -110,6 +135,9 @@ func TestFirewallCommandIsPortAndScopeAware(t *testing.T) {
 			command := strings.Join(action.Command, " ")
 			if !strings.Contains(command, "2222") || !strings.Contains(command, "100.64.0.0/10") {
 				t.Fatalf("firewall command is not port/scope aware: %s", command)
+			}
+			if action.Params["port"] != "2222" {
+				t.Fatalf("firewall action did not expose its port to CLI renderers: %#v", action.Params)
 			}
 			return
 		}
@@ -223,6 +251,36 @@ func TestInvalidSSHConfigurationAndMissingAuthenticationCannotVerifyAsReady(t *t
 	}
 	if !foundConfigRepair {
 		t.Fatal("invalid SSH configuration did not produce a repair action")
+	}
+}
+
+func TestPortRangeFirewallRuleBlocksApply(t *testing.T) {
+	profile := DefaultProfile()
+	snapshot := healthySnapshot(PlatformWindows)
+	snapshot.Firewall.PortRangeRules = []string{"SSH-range"}
+	plan := (Planner{}).Build(profile, snapshot)
+	if len(plan.Blockers) == 0 || plan.NoChanges {
+		t.Fatalf("a non-exact firewall port range must block Apply: %#v", plan)
+	}
+}
+
+func TestPortSpecParsingIsConservative(t *testing.T) {
+	for _, test := range []struct {
+		value    string
+		target   int
+		includes bool
+		exact    bool
+		valid    bool
+	}{
+		{value: "22", target: 22, includes: true, exact: true, valid: true},
+		{value: "20-24", target: 22, includes: true, exact: false, valid: true},
+		{value: "20-24", target: 25, includes: false, exact: false, valid: true},
+		{value: "bad", target: 22, includes: false, exact: false, valid: false},
+	} {
+		start, end, exact, ok := parsePortSpec(test.value)
+		if ok != test.valid || (ok && ((test.includes && (test.target < start || test.target > end)) || (!test.includes && test.target >= start && test.target <= end) || exact != test.exact)) {
+			t.Fatalf("parsePortSpec(%q) = %d-%d exact=%v ok=%v", test.value, start, end, exact, ok)
+		}
 	}
 }
 

@@ -9,6 +9,12 @@ export default defineConfig(({ mode }) => {
     define: {
       __APP_VERSION__: JSON.stringify(appVersion)
     },
+    plugins: [{
+      name: "preserve-dist-placeholder",
+      generateBundle() {
+        this.emitFile({ type: "asset", fileName: ".gitkeep", source: "" });
+      }
+    }],
     server: {
       port: 34115,
       strictPort: true

@@ -9,7 +9,7 @@
 1. 在 [最新 Release](https://github.com/Shallow-dusty/ssh-launchpad/releases/latest) 下载
    `SSH-Launchpad_*_Windows_x64_Installer_UNSIGNED.exe`（推荐）。
 2. 双击安装并打开，首屏选择“让这台电脑可以被远程连接”。
-3. 按“检查电脑 → 确认方案 → 完成连接”完成向导。
+3. 按“检查 → 准备安装 → 完成”完成向导；只有确认安装内容后才会请求 Windows 权限。
 
 普通用户直接启动即可；真正安装系统组件时才会出现 Windows UAC 权限确认。取消确认不会继续执行。
 
@@ -30,25 +30,25 @@
 
 向导会检测现有公钥、允许安全生成或导入公钥/配对文件，并在最后给出可复制的连接命令。第一次连接必须核对主机指纹；本机显示绿色不等于跨设备认证已经成功。
 
-## 个人信息卡
+## 装机卡
 
-在控制电脑上打开“创建信息卡”，可以把以下内容导出为一个
+在高级选项中创建“装机卡”，可以把以下内容导出为一个
 `.sshlaunchpad-card` 文件，再发送到新的被连接电脑直接导入：
 
-- 信息卡名称、控制电脑名称和备注；
+- 装机卡名称、控制电脑名称和备注；
 - 一个或多个控制电脑 SSH 公钥以及 SSH 端口；
 - Tailnet / LAN 模式、是否安装 Tailscale；
 - 可选的 Tailscale 一次性或短期授权码。
 
-信息卡不包含 SSH 私钥。Tailscale 授权码在界面中默认遮挡，也不会进入可查看的 Plan、
-执行日志或支持报告；信息卡文件本身包含该授权码，因此应像普通个人凭据文件一样只发给
+装机卡不包含 SSH 私钥。Tailscale 授权码在界面中默认遮挡，也不会进入可查看的计划、
+执行日志或支持报告；装机卡文件本身包含该授权码，因此应像普通个人凭据文件一样只发给
 你准备控制的设备。导入后应用先执行只读 Check，再显示将要安装和开放的内容，仍需手动
 通过 Windows UAC 才会修改系统。
 
 ## 安全默认值
 
 - 默认只允许 Tailscale 私有网络设备访问；Tailscale 是推荐项，不是 SSH 的硬依赖。
-- Check 和 Plan 只读；Verify 不提权。
+- Check 和 Plan 只读；Verify 不提权。GUI 的“准备安装”也只展示已审阅的内容。
 - Apply 会逐项说明“安装什么、打开哪个端口、谁能连接”后再确认。
 - 如果操作可能切断当前唯一 SSH/Tailscale 连接，默认阻止并给出本地执行、第二通道或延迟验证方案。
 - 重复运行只处理差异；失败后停止后续步骤并按执行记录恢复可逆改动。
@@ -88,11 +88,12 @@ UTF-8 并在退出时恢复；JSON/日志为 UTF-8 no BOM。非 UTF-8 的 Linux/
 Download the recommended unsigned Windows installer from the
 [latest Release](https://github.com/Shallow-dusty/ssh-launchpad/releases/latest), open it, and follow
 the guided UI. Choose the portable package for servers or repair; extract the complete archive and
-open `Start SSH Launchpad.cmd`. The language switch is always available and persists.
+open `Start SSH Launchpad.cmd`. The flow is Check → Ready to install → Finish. The language switch is always available and persists.
 
 ## 文档
 
 - [当前状态](STATUS.md)
+- [当前工作树审计](docs/audit-current-2026-08.md)
 - [版本变化](CHANGELOG.md)
 - [平台支持与验证边界](docs/platform-support.md)
 - [架构](docs/architecture.md)

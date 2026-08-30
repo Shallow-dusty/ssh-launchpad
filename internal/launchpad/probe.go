@@ -440,9 +440,10 @@ func probeFirewall(ctx context.Context, platform Platform, port int) (FirewallSt
 			return FirewallState{Provider: "windows-firewall"}, err
 		}
 		var rules []struct {
-			Name      string `json:"name"`
-			Scope     string `json:"scope"`
-			ExactPort bool   `json:"exactPort"`
+			Name        string `json:"name"`
+			DisplayName string `json:"displayName"`
+			Scope       string `json:"scope"`
+			ExactPort   bool   `json:"exactPort"`
 		}
 		if len(strings.TrimSpace(string(out))) > 2 && json.Unmarshal(out, &rules) != nil {
 			return FirewallState{Provider: "windows-firewall"}, errors.New("could not parse Windows firewall rule inventory")
@@ -455,13 +456,23 @@ func probeFirewall(ctx context.Context, platform Platform, port int) (FirewallSt
 		for _, rule := range rules {
 			state.Ports = []int{port}
 			state.Scopes = append(state.Scopes, rule.Scope)
+			name := rule.Name
+			if name == "" {
+				name = rule.DisplayName
+			}
+			if !rule.ExactPort {
+				if name == "" {
+					name = "unnamed port-range rule"
+				}
+				state.PortRangeRules = append(state.PortRangeRules, name)
+			}
 			if broadFirewallScope(rule.Scope) {
 				state.BroadExposure = true
-				if rule.Name != "" {
+				if name != "" {
 					if rule.ExactPort {
-						state.ConflictingRules = append(state.ConflictingRules, rule.Name)
+						state.ConflictingRules = append(state.ConflictingRules, name)
 					} else {
-						state.UnresolvedBroadRules = append(state.UnresolvedBroadRules, rule.Name)
+						state.UnresolvedBroadRules = append(state.UnresolvedBroadRules, name)
 					}
 				}
 			}
@@ -480,15 +491,18 @@ func probeFirewall(ctx context.Context, platform Platform, port int) (FirewallSt
 				Enabled:  strings.Contains(strings.ToLower(string(out)), "status: active"),
 				Provider: "ufw",
 			}
-			linePattern := regexp.MustCompile(`^\s*(\d+)(?:/tcp)?(?:\s+\(v6\))?\s+ALLOW(?:\s+IN)?\s+(.+?)\s*$`)
+			linePattern := regexp.MustCompile(`^\s*(\d+)(?:-(\d+))?(?:/tcp)?(?:\s+\(v6\))?\s+ALLOW(?:\s+IN)?\s+(.+?)\s*$`)
 			for _, line := range strings.Split(string(out), "\n") {
 				match := linePattern.FindStringSubmatch(line)
-				if len(match) != 3 || match[1] != strconv.Itoa(port) {
+				if len(match) != 4 || !portSpecIncludes(match[1], match[2], port) {
 					continue
 				}
-				scope := strings.TrimSpace(match[2])
+				scope := strings.TrimSpace(match[3])
 				state.Ports = []int{port}
 				state.Scopes = append(state.Scopes, scope)
+				if match[2] != "" {
+					state.PortRangeRules = append(state.PortRangeRules, strings.TrimSpace(line))
+				}
 				if broadFirewallScope(scope) || strings.EqualFold(scope, "Anywhere") || strings.HasPrefix(strings.ToLower(scope), "anywhere ") {
 					state.BroadExposure = true
 				}
@@ -503,24 +517,42 @@ func probeFirewall(ctx context.Context, platform Platform, port int) (FirewallSt
 			state := FirewallState{Checked: true, Enabled: true, Provider: "firewall-cmd"}
 			portsOut, _ := runCommand(ctx, 8*time.Second, "firewall-cmd", "--list-ports")
 			for _, declared := range strings.Fields(string(portsOut)) {
-				if declared == strconv.Itoa(port)+"/tcp" {
-					state.Ports = []int{port}
-					state.Scopes = append(state.Scopes, "")
+				portPart, ok := strings.CutSuffix(declared, "/tcp")
+				if !ok {
+					continue
+				}
+				start, end, exact, ok := parsePortSpec(portPart)
+				if !ok || port < start || port > end {
+					continue
+				}
+				state.Ports = []int{port}
+				state.Scopes = append(state.Scopes, "")
+				if !exact {
+					state.PortRangeRules = append(state.PortRangeRules, declared)
+				} else {
 					state.BroadExposure = true
 				}
 			}
-			portPattern := regexp.MustCompile(`port port="` + regexp.QuoteMeta(strconv.Itoa(port)) + `" protocol="tcp"`)
+			portPattern := regexp.MustCompile(`port port="([^"]+)" protocol="tcp"`)
 			sourcePattern := regexp.MustCompile(`source address="([^"]+)"`)
 			for _, line := range strings.Split(string(out), "\n") {
-				if !portPattern.MatchString(line) {
+				match := portPattern.FindStringSubmatch(line)
+				if len(match) != 2 {
+					continue
+				}
+				start, end, exact, ok := parsePortSpec(match[1])
+				if !ok || port < start || port > end {
 					continue
 				}
 				scope := ""
-				if match := sourcePattern.FindStringSubmatch(line); len(match) == 2 {
-					scope = match[1]
+				if sourceMatch := sourcePattern.FindStringSubmatch(line); len(sourceMatch) == 2 {
+					scope = sourceMatch[1]
 				}
 				state.Ports = []int{port}
 				state.Scopes = append(state.Scopes, scope)
+				if !exact {
+					state.PortRangeRules = append(state.PortRangeRules, strings.TrimSpace(line))
+				}
 				if broadFirewallScope(scope) {
 					state.BroadExposure = true
 				}
@@ -529,6 +561,35 @@ func probeFirewall(ctx context.Context, platform Platform, port int) (FirewallSt
 		}
 	}
 	return FirewallState{}, errors.New("no supported firewall provider was detected")
+}
+
+func portSpecIncludes(startText, endText string, target int) bool {
+	start, end, _, ok := parsePortSpec(startText)
+	if endText != "" {
+		start, end, _, ok = parsePortSpec(startText + "-" + endText)
+	}
+	return ok && target >= start && target <= end
+}
+
+func parsePortSpec(value string) (start, end int, exact, ok bool) {
+	parts := strings.SplitN(strings.TrimSpace(value), "-", 2)
+	if len(parts) == 0 || len(parts) > 2 {
+		return 0, 0, false, false
+	}
+	start, err := strconv.Atoi(parts[0])
+	if err != nil || start < 1 || start > 65535 {
+		return 0, 0, false, false
+	}
+	end = start
+	exact = true
+	if len(parts) == 2 {
+		end, err = strconv.Atoi(parts[1])
+		if err != nil || end < start || end > 65535 {
+			return 0, 0, false, false
+		}
+		exact = start == end
+	}
+	return start, end, exact, true
 }
 
 func broadFirewallScope(scope string) bool {

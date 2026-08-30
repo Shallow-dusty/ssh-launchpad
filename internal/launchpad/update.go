@@ -49,7 +49,7 @@ func CheckForUpdate(ctx context.Context) (UpdateInfo, error) {
 		return UpdateInfo{}, err
 	}
 	releaseURL, err := url.Parse(payload.HTMLURL)
-	if err != nil || releaseURL.Scheme != "https" || !strings.EqualFold(releaseURL.Hostname(), "github.com") {
+	if err != nil || releaseURL.Scheme != "https" || releaseURL.User != nil || !strings.EqualFold(releaseURL.Hostname(), "github.com") {
 		return UpdateInfo{}, errors.New("release metadata returned an untrusted release URL")
 	}
 	latest := strings.TrimPrefix(payload.TagName, "v")

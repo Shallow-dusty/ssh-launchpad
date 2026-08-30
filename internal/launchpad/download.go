@@ -45,7 +45,7 @@ func DownloadWithFallback(ctx context.Context, req DownloadRequest, sources []Do
 		if err := DownloadVerified(ctx, attempt, progress); err == nil {
 			return source.URL, nil
 		} else {
-			failures = append(failures, fmt.Sprintf("%s: %v", source.URL, err))
+			failures = append(failures, fmt.Sprintf("%s: %v", safeURLForError(source.URL), err))
 		}
 	}
 	return "", fmt.Errorf("all download sources failed: %s", strings.Join(failures, "; "))
@@ -59,8 +59,8 @@ func DownloadVerified(ctx context.Context, req DownloadRequest, progress func(re
 	if u.Scheme != "https" {
 		return errors.New("downloads require HTTPS")
 	}
-	if u.Host == "" {
-		return errors.New("download URL must be absolute")
+	if u.Host == "" || u.User != nil {
+		return errors.New("download URL must be absolute HTTPS without embedded credentials")
 	}
 	if _, err := hex.DecodeString(req.SHA256); err != nil || len(req.SHA256) != 64 {
 		return errors.New("an expected SHA-256 is required")
@@ -77,13 +77,20 @@ func DownloadVerified(ctx context.Context, req DownloadRequest, progress func(re
 	if err := os.MkdirAll(filepath.Dir(req.Output), 0o755); err != nil {
 		return err
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	baseTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok || baseTransport == nil {
+		baseTransport = &http.Transport{}
+	}
+	transport := baseTransport.Clone()
 	if req.ProxyURL != "" {
-		proxy, err := url.Parse(req.ProxyURL)
-		if err != nil || (proxy.Scheme != "http" && proxy.Scheme != "https" && proxy.Scheme != "socks5") || proxy.Host == "" {
-			return errors.New("proxy URL must be an absolute http, https, or socks5 URL")
+		proxyURL, err := url.Parse(req.ProxyURL)
+		if err != nil {
+			return err
 		}
-		transport.Proxy = http.ProxyURL(proxy)
+		if (proxyURL.Scheme != "http" && proxyURL.Scheme != "https") || proxyURL.Host == "" {
+			return errors.New("proxy URL must be an absolute HTTP or HTTPS URL")
+		}
+		transport.Proxy = http.ProxyURL(proxyURL)
 	}
 	client := &http.Client{
 		Transport: transport,
@@ -94,6 +101,9 @@ func DownloadVerified(ctx context.Context, req DownloadRequest, progress func(re
 			}
 			if request.URL.Scheme != "https" {
 				return errors.New("download redirect downgraded from HTTPS")
+			}
+			if request.URL.User != nil {
+				return errors.New("download redirect contains embedded credentials")
 			}
 			return nil
 		},
@@ -127,6 +137,15 @@ func DownloadVerified(ctx context.Context, req DownloadRequest, progress func(re
 		return os.Rename(partial, req.Output)
 	}
 	return fmt.Errorf("download failed after %d attempt(s): %w", req.Retries+1, lastErr)
+}
+
+func safeURLForError(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "<invalid-url>"
+	}
+	parsed.User = nil
+	return parsed.String()
 }
 
 func downloadAttempt(ctx context.Context, client *http.Client, rawURL, output string, maxBytes int64, progress func(received, total int64)) error {

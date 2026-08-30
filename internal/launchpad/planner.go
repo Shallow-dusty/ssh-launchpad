@@ -117,6 +117,8 @@ func (Planner) Build(profile Profile, snapshot Snapshot) (plan Plan) {
 			plan.Blockers = append(plan.Blockers, "No supported firewall provider is available for this target; SSH exposure cannot be verified safely.")
 		case len(snapshot.Firewall.UnresolvedBroadRules) > 0:
 			plan.Blockers = append(plan.Blockers, "Broad inbound firewall rules that cover multiple ports also expose SSH. Review them manually before Apply: "+strings.Join(snapshot.Firewall.UnresolvedBroadRules, ", "))
+		case len(snapshot.Firewall.PortRangeRules) > 0:
+			plan.Blockers = append(plan.Blockers, "Existing inbound firewall rules cover a range of ports that includes SSH. Replace or narrow them before Apply: "+strings.Join(snapshot.Firewall.PortRangeRules, ", "))
 		case snapshot.Firewall.BroadExposure && !(snapshot.Platform == PlatformWindows && len(snapshot.Firewall.ConflictingRules) > 0):
 			plan.Blockers = append(plan.Blockers, "An existing broad inbound rule exposes the SSH port and cannot be safely remediated automatically. Restrict or remove it before Apply.")
 		case hasUnexpectedFirewallScopes(snapshot.Firewall, scopes, snapshot.Platform == PlatformWindows && len(snapshot.Firewall.ConflictingRules) > 0):
@@ -272,9 +274,9 @@ func configureKeysAction(profile Profile, snapshot Snapshot) Action {
 	default:
 		backupSuffix := ".ssh-launchpad-" + stamp + ".bak"
 		targetPrelude := `target_user="${SUDO_USER:-$(id -un)}"; if command -v getent >/dev/null 2>&1; then target_home="$(getent passwd "$target_user" | cut -d: -f6)"; elif command -v dscacheutil >/dev/null 2>&1; then target_home="$(dscacheutil -q user -a name "$target_user" | awk '/^dir:/{print $2; exit}')"; else target_home="$HOME"; fi; [ -n "$target_home" ]`
-		script := fmt.Sprintf(`set -eu; %s; ssh_dir="$target_home/.ssh"; path="$ssh_dir/authorized_keys"; backup="$path%s"; mkdir -p "$ssh_dir"; chmod 700 "$ssh_dir"; if [ -f "$path" ]; then cp -p "$path" "$backup"; else : > "$path"; fi; tmp="$path.ssh-launchpad.tmp"; { cat "$path"; printf %%s %s | base64 -d; } | awk 'NF && !seen[$0]++' > "$tmp"; mv "$tmp" "$path"; chmod 600 "$path"; if [ "$(id -u)" -eq 0 ] && [ "$target_user" != root ]; then chown -R "$target_user" "$ssh_dir"; fi`, targetPrelude, backupSuffix, shQuote(encoded))
+		script := fmt.Sprintf(`set -eu; %s; ssh_dir="$target_home/.ssh"; if [ -L "$ssh_dir" ] || { [ -e "$ssh_dir" ] && [ ! -d "$ssh_dir" ]; }; then echo 'authorized_keys directory must not be a symlink or non-directory' >&2; exit 1; fi; mkdir -p "$ssh_dir"; if [ -L "$ssh_dir" ]; then echo 'authorized_keys directory changed to a symlink' >&2; exit 1; fi; chmod 700 "$ssh_dir"; path="$ssh_dir/authorized_keys"; backup="$path%s"; if [ -L "$path" ] || [ -L "$backup" ]; then echo 'authorized_keys and backup paths must not be symlinks' >&2; exit 1; fi; if [ -e "$path" ] && [ ! -f "$path" ]; then echo 'authorized_keys must be a regular file' >&2; exit 1; fi; if [ -e "$backup" ]; then echo 'authorized_keys backup already exists' >&2; exit 1; fi; if [ -f "$path" ]; then cp -p "$path" "$backup"; else (set -C; : > "$path"); fi; tmp="$(mktemp "$ssh_dir/.ssh-launchpad.tmp.XXXXXX")"; trap 'rm -f "$tmp"' EXIT HUP INT TERM; { cat "$path"; printf %%s %s | base64 -d; } | awk 'NF && !seen[$0]++' > "$tmp"; chmod 600 "$tmp"; mv "$tmp" "$path"; chmod 600 "$path"; if [ "$(id -u)" -eq 0 ] && [ "$target_user" != root ]; then chown -R "$target_user" "$ssh_dir"; fi`, targetPrelude, backupSuffix, shQuote(encoded))
 		a.Command = unixCommand(script)
-		a.RollbackCommand = unixCommand(fmt.Sprintf(`set -eu; %s; path="$target_home/.ssh/authorized_keys"; backup="$path%s"; if [ -f "$backup" ]; then cp -p "$backup" "$path"; else rm -f "$path"; fi; if [ "$(id -u)" -eq 0 ] && [ "$target_user" != root ]; then chown "$target_user" "$path" 2>/dev/null || true; fi`, targetPrelude, backupSuffix))
+		a.RollbackCommand = unixCommand(fmt.Sprintf(`set -eu; %s; ssh_dir="$target_home/.ssh"; path="$ssh_dir/authorized_keys"; backup="$path%s"; if [ -L "$ssh_dir" ] || [ -L "$path" ] || [ -L "$backup" ]; then echo 'authorized_keys rollback paths must not be symlinks' >&2; exit 1; fi; if [ -e "$path" ] && [ ! -f "$path" ]; then echo 'authorized_keys rollback target must be a regular file' >&2; exit 1; fi; if [ -f "$backup" ]; then cp -p "$backup" "$path"; else rm -f "$path"; fi; if [ "$(id -u)" -eq 0 ] && [ "$target_user" != root ]; then chown "$target_user" "$path" 2>/dev/null || true; fi`, targetPrelude, backupSuffix))
 	}
 	a.Params = map[string]string{"keyCount": strconv.Itoa(len(profile.SSH.PublicKeys))}
 	return a
@@ -332,8 +334,12 @@ func configureFirewallAction(profile Profile, snapshot Snapshot, scopes []string
 			}
 			add = append(add, "firewall-cmd --reload")
 			remove = append(remove, "firewall-cmd --reload")
-			a.Command = unixCommand("set -eu; " + strings.Join(add, "; "))
-			a.RollbackCommand = unixCommand("set -eu; " + strings.Join(remove, "; "))
+			rollbackOnFailure := make([]string, 0, len(remove))
+			for _, command := range remove {
+				rollbackOnFailure = append(rollbackOnFailure, "("+command+") || true")
+			}
+			a.Command = unixCommand("set -eu; if ! { " + strings.Join(add, "; ") + "; }; then " + strings.Join(rollbackOnFailure, "; ") + "; exit 1; fi")
+			a.RollbackCommand = unixCommand("set -eu; " + strings.Join(rollbackOnFailure, "; "))
 		default:
 			var add, remove []string
 			for _, scope := range scopes {
@@ -341,11 +347,15 @@ func configureFirewallAction(profile Profile, snapshot Snapshot, scopes []string
 				add = append(add, "ufw "+args)
 				remove = append(remove, "ufw --force delete "+args)
 			}
-			a.Command = unixCommand("set -eu; " + strings.Join(add, "; "))
-			a.RollbackCommand = unixCommand("set -eu; " + strings.Join(remove, "; "))
+			rollbackOnFailure := make([]string, 0, len(remove))
+			for _, command := range remove {
+				rollbackOnFailure = append(rollbackOnFailure, "("+command+") || true")
+			}
+			a.Command = unixCommand("set -eu; if ! { " + strings.Join(add, "; ") + "; }; then " + strings.Join(rollbackOnFailure, "; ") + "; exit 1; fi")
+			a.RollbackCommand = unixCommand("set -eu; " + strings.Join(rollbackOnFailure, "; "))
 		}
 	}
-	a.Params = map[string]string{"ruleName": name, "scopes": strings.Join(scopes, ",")}
+	a.Params = map[string]string{"ruleName": name, "port": strconv.Itoa(profile.SSH.Port), "scopes": strings.Join(scopes, ",")}
 	return a
 }
 
@@ -354,7 +364,7 @@ func baseAction(id, operation, layer string, risk Risk, summary, reason string) 
 }
 
 func firewallMatches(state FirewallState, profile Profile, snapshot Snapshot) bool {
-	if !state.Checked || !state.Enabled || !supportedFirewallProvider(snapshot.Platform, state.Provider) || state.BroadExposure || len(state.UnresolvedBroadRules) > 0 || !containsInt(state.Ports, profile.SSH.Port) {
+	if !state.Checked || !state.Enabled || !supportedFirewallProvider(snapshot.Platform, state.Provider) || state.BroadExposure || len(state.UnresolvedBroadRules) > 0 || len(state.PortRangeRules) > 0 || !containsInt(state.Ports, profile.SSH.Port) {
 		return false
 	}
 	desired := firewallScopeSet(exposureScopes(profile, snapshot))

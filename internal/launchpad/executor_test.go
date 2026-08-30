@@ -10,7 +10,9 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -88,6 +90,33 @@ func TestSelfCutIsBlockedByDefault(t *testing.T) {
 	report, err := executor.Apply(context.Background(), DefaultProfile(), plan, ApplyOptions{Confirmed: true, JournalDir: t.TempDir()})
 	if err == nil || report.ExitCode != ExitSelfCutBlocked {
 		t.Fatalf("unexpected result: %+v %v", report, err)
+	}
+}
+
+func TestScheduledFallbackCanBeCancelled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fallback is Unix-only")
+	}
+	command, err := scheduledCommand([]string{"restart-ssh"}, 5, "configure_sshd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := strings.Join(command, " ")
+	if output, syntaxErr := exec.Command("sh", "-n", "-c", command[2]).CombinedOutput(); syntaxErr != nil {
+		t.Fatalf("scheduled fallback has invalid shell syntax: %v\n%s", syntaxErr, output)
+	}
+	cancelCommand := cancelScheduledCommand("configure_sshd")
+	if output, syntaxErr := exec.Command("sh", "-n", "-c", cancelCommand[2]).CombinedOutput(); syntaxErr != nil {
+		t.Fatalf("scheduled cancellation has invalid shell syntax: %v\n%s", syntaxErr, output)
+	}
+	for _, required := range []string{"systemd-run", ".pid", "set -C", "kill", "pidfile"} {
+		if !strings.Contains(generated, required) {
+			t.Fatalf("scheduled command missing cancellable fallback %q: %s", required, generated)
+		}
+	}
+	cancel := strings.Join(cancelCommand, " ")
+	if !strings.Contains(cancel, "kill") || !strings.Contains(cancel, ".pid") {
+		t.Fatalf("scheduled cancellation does not cover fallback process: %s", cancel)
 	}
 }
 

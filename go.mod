@@ -2,7 +2,7 @@ module github.com/Shallow-dusty/ssh-launchpad
 
 go 1.25.0
 
-toolchain go1.25.12
+toolchain go1.25.13
 
 require (
 	github.com/wailsapp/wails/v2 v2.13.0
