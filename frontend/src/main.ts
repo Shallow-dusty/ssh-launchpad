@@ -51,6 +51,7 @@ const state: {
   installState: InstallState;
   installError: string;
   checkError: string;
+  cardImportError: string;
   verifyError: string;
   activeJob?: ElevatedJob;
   toast: string;
@@ -76,6 +77,7 @@ const state: {
   installState: "idle",
   installError: "",
   checkError: "",
+  cardImportError: "",
   verifyError: "",
   toast: "",
   showNetwork: false,
@@ -656,15 +658,22 @@ async function exportProfile(): Promise<void> {
 }
 
 async function importPersonalCard(): Promise<void> {
+  state.cardImportError = "";
   try {
     if (window.go?.main?.App) {
       const card = await window.go.main.App.ImportPersonalCard();
-      if (card.schemaVersion) await applyPersonalCard(card);
+      // An empty card means the file dialog was dismissed; that is a normal
+      // cancel, not a silent failure. Every real failure below lands in the
+      // persistent cardImportError banner instead of a transient toast.
+      if (!card.schemaVersion) return;
+      await applyPersonalCard(card);
+      showToast(t("cardImported"));
     } else {
       document.querySelector<HTMLInputElement>("#card-file")!.click();
     }
   } catch (error) {
-    showToast(friendlyError(error));
+    state.cardImportError = friendlyError(error);
+    renderPage();
   }
 }
 

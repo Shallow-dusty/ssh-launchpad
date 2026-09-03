@@ -33,6 +33,7 @@ export interface ViewState {
   installState: InstallState;
   installError: string;
   checkError: string;
+  cardImportError: string;
   verifyError: string;
   activeJob?: ElevatedJob;
   // Prepare-step expanders ("更改" affordances; choices stay collapsed otherwise).
@@ -62,7 +63,7 @@ export function renderHome(state: ViewState, t: Translate): string {
         <button id="advanced-link" class="text-link">${slidersIcon()} ${t("homeAdvancedLink")}</button>
       </nav>
       <footer class="privacy-foot"><span>${lockIcon()}</span>${t("noTelemetry")}</footer>
-    </div>`;
+    </div>${state.cardImportError ? resultBanner("bad", t("cardImportFailed"), state.cardImportError, t) : ""}`;
 }
 
 // ---------------------------------------------------------------- wizard shell
@@ -127,6 +128,7 @@ function renderCheckStep(state: ViewState, t: Translate): string {
   return `
     ${verdict}
     ${repair && !ready ? `<ul class="fix-list">${issues.map((key) => `<li>${arrowIcon()}<span>${escapeHtml(t(key, { port: state.profile.ssh.port }))}</span></li>`).join("")}</ul>` : ""}
+    ${snapshot.probeErrors?.length ? `<section class="result-banner warn" role="status"><span>${warningIcon()}</span><div><h2>${escapeHtml(t("probeIssuesTitle"))}</h2><ul class="fix-list">${snapshot.probeErrors.map((probeError) => `<li>${arrowIcon()}<span>${escapeHtml(probeError)}</span></li>`).join("")}</ul></div></section>` : ""}
     ${renderFacts(snapshot, t)}
     <div class="wizard-actions">
       <button id="run-check" class="button secondary">${t("checkRetry")}</button>
@@ -185,7 +187,7 @@ function renderPrepareOutcome(
   plan: Report["plan"], keyNeeded: boolean, keyReady: boolean, selected: string
 ): string {
   if (state.busy && !plan) {
-    return `<article class="panel intro-panel"><span class="spinner" aria-hidden="true"></span><p class="intro-text">${t("prepareLoading")}</p></article>`;
+    return `<article class="panel intro-panel"><span class="spinner" aria-hidden="true"></span><p class="intro-text">${t("prepareLoading")}</p><p class="muted small">${t("prepareSlowHint")}</p></article>`;
   }
   if (state.planError) {
     return `${resultBanner("bad", t("prepareFailed"), state.planError, t)}
@@ -430,6 +432,7 @@ export function renderAdvanced(state: ViewState, t: Translate): string {
       <label class="field"><span>${t("cardAuthKey")}</span><input id="card-tailscale-auth-key" type="password" autocomplete="off" spellcheck="false" value="${escapeHtml(profile.transport.authKey ?? "")}" placeholder="tskey-auth-…"/><small>${t("cardAuthKeyHint")}</small></label>
       <p class="small-note">${t("cardIncludes")}</p>
       <div class="toolbar"><button id="import-personal-card-advanced" class="button secondary">${uploadIcon()} ${t("cardImport")}</button><button id="export-personal-card" class="button secondary">${downloadIcon()} ${t("cardExport")}</button></div>
+      ${state.cardImportError ? resultBanner("bad", t("cardImportFailed"), state.cardImportError, t) : ""}
     </section>
 
     <section class="panel"><h2>${t("groupDiagnostics")}</h2>

@@ -59,6 +59,7 @@ export interface Snapshot {
   tailscale: { installed: boolean; online: boolean; ip?: string; state?: string };
   network: { githubDns: boolean; tailscaleDns: boolean; proxySet: boolean; lanIps?: string[]; lanScopes?: string[] };
   warnings?: string[];
+  probeErrors?: string[];
 }
 
 export interface PlanAction {
