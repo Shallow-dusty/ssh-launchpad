@@ -479,7 +479,11 @@ func probeFirewall(ctx context.Context, platform Platform, port int) (FirewallSt
 	switch platform {
 	case PlatformWindows:
 		script := fmt.Sprintf(`$target=%d; function Test-Port($spec){foreach($part in @($spec)-split ','){$part=$part.Trim(); if($part -in @('Any','*')){return $true}; if($part -match '^(\d+)-(\d+)$' -and $target -ge [int]$Matches[1] -and $target -le [int]$Matches[2]){return $true}; if($part -match '^\d+$' -and [int]$part -eq $target){return $true}}; return $false}; $r=Get-NetFirewallPortFilter -Protocol TCP -ErrorAction SilentlyContinue | Where-Object {Test-Port $_.LocalPort} | ForEach-Object {$filter=$_; $rule=Get-NetFirewallRule -AssociatedNetFirewallPortFilter $filter -ErrorAction SilentlyContinue | Where-Object {$_.Enabled -eq 'True' -and $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow'}; foreach($item in $rule){$a=Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $item -ErrorAction SilentlyContinue; [pscustomobject]@{port=$target;name=$item.Name;displayName=$item.DisplayName;scope=($a.RemoteAddress -join ',');exactPort=([string]$filter.LocalPort -eq [string]$target)}}}; ConvertTo-Json -InputObject @($r) -Compress`, port)
-		out, err := runCommand(ctx, 12*time.Second, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+		// The inventory sweep enumerates every TCP port filter and its rule
+		// associations; measured at 14.4s on an idle, nearly rule-free Windows
+		// Server VM without elevation, so real consumer machines with many
+		// rules routinely exceed the old 12s limit and get killed mid-sweep.
+		out, err := runCommand(ctx, 45*time.Second, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
 		if err != nil {
 			return FirewallState{Provider: "windows-firewall"}, err
 		}
