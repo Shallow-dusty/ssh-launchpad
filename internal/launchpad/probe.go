@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -24,6 +25,13 @@ type Probe interface {
 }
 
 type SystemProbe struct{}
+
+// probeOverallBudget bounds the wall clock of a whole Check: independent
+// probe groups run concurrently, so one slow helper command (for example a
+// powershell child suspended by antivirus software on a consumer Windows
+// machine) degrades into a recorded probe error instead of stretching the
+// check into minutes with only a spinner for feedback.
+var probeOverallBudget = 75 * time.Second
 
 func (SystemProbe) Check(ctx context.Context, profile Profile) (Snapshot, error) {
 	platform := detectPlatform()
@@ -40,25 +48,61 @@ func (SystemProbe) Check(ctx context.Context, profile Profile) (Snapshot, error)
 	s.IsAdministrator = detectAdministrator(ctx, platform)
 	s.PackageManager = detectPackageManager()
 	s.SSHClient = probeCapability(ctx, "ssh", "-V")
-	s.SSHServer, s.SSHService, s.SSHPort = probeSSHServer(ctx, platform, profile)
-	s.SSHConfigValid = probeSSHConfig(ctx, platform, s.SSHServer)
-	s.Network = probeNetwork(ctx)
-	s.Tailscale = probeTailscale(ctx)
-	effective := probeSSHEffectiveConfig(ctx, platform, s.SSHServer)
-	if effective.Checked {
-		// sshd -T parsed the complete effective configuration successfully. It
-		// is a sufficient syntax check when an unprivileged probe cannot read
-		// host private keys required by sshd -t.
-		s.SSHConfigValid = true
-		if path, err := resolveEffectiveAuthorizedKeysPath(effective.AuthorizedKeysFile, s); err == nil {
-			s.SSHAuthorizedKeysFileChecked = true
-			s.SSHAuthorizedKeysFile = path
-		}
+
+	probeCtx, cancelProbe := context.WithTimeout(ctx, probeOverallBudget)
+	defer cancelProbe()
+	var probeMu sync.Mutex
+	addProbeError := func(format string, args ...any) {
+		probeMu.Lock()
+		defer probeMu.Unlock()
+		s.ProbeErrors = append(s.ProbeErrors, fmt.Sprintf(format, args...))
 	}
-	s.SSHAuthenticationChecked = effective.Checked
-	s.SSHPasswordAuthentication = effective.PasswordAuthentication
-	s.SSHKbdInteractiveAuthentication = effective.KbdInteractiveAuthentication
-	s.SSHPubkeyAuthentication = effective.PubkeyAuthentication
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.SSHServer, s.SSHService, s.SSHPort = probeSSHServer(probeCtx, platform, profile)
+		s.SSHConfigValid = probeSSHConfig(probeCtx, platform, s.SSHServer)
+		effective := probeSSHEffectiveConfig(probeCtx, platform, s.SSHServer)
+		if effective.Checked {
+			// sshd -T parsed the complete effective configuration successfully. It
+			// is a sufficient syntax check when an unprivileged probe cannot read
+			// host private keys required by sshd -t.
+			s.SSHConfigValid = true
+			if path, err := resolveEffectiveAuthorizedKeysPath(effective.AuthorizedKeysFile, s); err == nil {
+				s.SSHAuthorizedKeysFileChecked = true
+				s.SSHAuthorizedKeysFile = path
+			}
+		}
+		s.SSHAuthenticationChecked = effective.Checked
+		s.SSHPasswordAuthentication = effective.PasswordAuthentication
+		s.SSHKbdInteractiveAuthentication = effective.KbdInteractiveAuthentication
+		s.SSHPubkeyAuthentication = effective.PubkeyAuthentication
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.Network = probeNetwork(probeCtx)
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		s.Tailscale = probeTailscale(probeCtx)
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		firewall, err := probeFirewall(probeCtx, platform, profile.SSH.Port)
+		s.Firewall = firewall
+		if err != nil {
+			addProbeError("firewall: %v", err)
+		}
+	}()
+	wg.Wait()
+	if ctx.Err() == nil && probeCtx.Err() != nil {
+		addProbeError("overall: %v; helper commands may be suspended by antivirus or security software", probeCtx.Err())
+	}
 	s.AuthorizedKeysChecked, s.AuthorizedKeysMatch, s.AuthorizedKeysCount = probeAuthorizedKeys(s, profile)
 	var firewallErr error
 	s.Firewall, firewallErr = probeFirewall(ctx, platform, profile.SSH.Port)
