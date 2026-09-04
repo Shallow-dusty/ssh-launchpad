@@ -90,6 +90,13 @@ Download the recommended unsigned Windows installer from the
 the guided UI. Choose the portable package for servers or repair; extract the complete archive and
 open `Start SSH Launchpad.cmd`. The flow is Check → Ready to install → Finish. The language switch is always available and persists.
 
+## 相关项目
+
+- [SSH-Launchpad OneClick（Remote-Onboarder）](https://github.com/Shallow-dusty/remote-onboarder)：
+  极简 Windows x64 单文件产品线 —— 一个内嵌 OpenSSH/Tailscale MSI 与密钥的
+  IExpress 自解压 EXE，双击即完成接入，无需运行时或安装向导。适合把目标机器
+  配好后直接发给对方的一次性场景。
+
 ## 文档
 
 - [当前状态](STATUS.md)
