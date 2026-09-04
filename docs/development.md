@@ -20,7 +20,7 @@ wrapper so the custom NSIS identity/upgrade checks and GUI version resources
 are applied:
 
 ```text
-pwsh -NoProfile -File scripts/build-windows-installer.ps1 -Version 0.2.5
+pwsh -NoProfile -File scripts/build-windows-installer.ps1 -Version 0.2.6
 ```
 
 Never run tests that change SSH, Tailscale, RDP, or firewall state on a real
