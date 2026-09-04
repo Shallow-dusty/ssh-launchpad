@@ -73,6 +73,14 @@ func (SystemProbe) Check(ctx context.Context, profile Profile) (Snapshot, error)
 			if path, err := resolveEffectiveAuthorizedKeysPath(effective.AuthorizedKeysFile, s); err == nil {
 				s.SSHAuthorizedKeysFileChecked = true
 				s.SSHAuthorizedKeysFile = path
+			} else if platform == PlatformWindows && s.TargetUserIsAdmin && isAdminDefaultAuthorizedKeysPath(effective.AuthorizedKeysFile, s) {
+				// Win32-OpenSSH serves members of the Administrators group from
+				// the machine-wide administrators_authorized_keys file whenever
+				// the effective AuthorizedKeysFile is the default per-user path,
+				// even though sshd -T still prints that per-user default. Model
+				// that redirection so stock Windows hosts stay verifiable.
+				s.SSHAuthorizedKeysFileChecked = true
+				s.SSHAuthorizedKeysFile = filepath.Join(programDataDir(), "ssh", "administrators_authorized_keys")
 			}
 		}
 		s.SSHAuthenticationChecked = effective.Checked
@@ -104,11 +112,6 @@ func (SystemProbe) Check(ctx context.Context, profile Profile) (Snapshot, error)
 		addProbeError("overall: %v; helper commands may be suspended by antivirus or security software", probeCtx.Err())
 	}
 	s.AuthorizedKeysChecked, s.AuthorizedKeysMatch, s.AuthorizedKeysCount = probeAuthorizedKeys(s, profile)
-	var firewallErr error
-	s.Firewall, firewallErr = probeFirewall(ctx, platform, profile.SSH.Port)
-	if firewallErr != nil {
-		s.ProbeErrors = append(s.ProbeErrors, "firewall: "+firewallErr.Error())
-	}
 	if platform == PlatformWSL {
 		s.PlatformDetails["hostLayer"] = "wsl"
 		s.Warnings = append(s.Warnings, "WSL is treated as a separate target; Windows host state was not inferred.")
@@ -393,6 +396,39 @@ func probeSSHConfig(ctx context.Context, platform Platform, server Capability) b
 	}
 	_, err := runCommand(ctx, 8*time.Second, path, args...)
 	return err == nil
+}
+
+// programDataDir returns the Windows ProgramData directory with a safe
+// fallback matching the other probes in this package.
+func programDataDir() string {
+	if programData := os.Getenv("ProgramData"); programData != "" {
+		return programData
+	}
+	return `C:\ProgramData`
+}
+
+// isAdminDefaultAuthorizedKeysPath reports whether the effective
+// AuthorizedKeysFile printed by sshd -T is the stock per-user default that
+// Win32-OpenSSH replaces with administrators_authorized_keys for admin-group
+// users. Anything explicitly configured fails closed to the strict resolver.
+func isAdminDefaultAuthorizedKeysPath(configured string, snapshot Snapshot) bool {
+	fields := strings.Fields(configured)
+	if len(fields) != 1 {
+		return false
+	}
+	configured = fields[0]
+	if strings.Contains(configured, "%") {
+		return false
+	}
+	home, err := targetUserHome()
+	if err != nil {
+		return false
+	}
+	defaultPath := filepath.Join(home, ".ssh", "authorized_keys")
+	if !filepath.IsAbs(configured) {
+		configured = filepath.Join(home, configured)
+	}
+	return strings.EqualFold(filepath.Clean(configured), filepath.Clean(defaultPath))
 }
 
 func resolveEffectiveAuthorizedKeysPath(configured string, snapshot Snapshot) (string, error) {

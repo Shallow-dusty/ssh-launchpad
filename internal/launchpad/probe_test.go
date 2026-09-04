@@ -52,3 +52,23 @@ func TestCheckParentCancelKeepsSnapshotSilent(t *testing.T) {
 		}
 	}
 }
+
+func TestIsAdminDefaultAuthorizedKeysPath(t *testing.T) {
+	admin := Snapshot{TargetUserIsAdmin: true}
+	cases := []struct {
+		configured string
+		want       bool
+	}{
+		{".ssh/authorized_keys", true},
+		{`C:\ProgramData\ssh\administrators_authorized_keys`, false},
+		{`__PROGRAMDATA__/ssh/administrators_authorized_keys`, false},
+		{".ssh/authorized_keys .ssh/authorized_keys2", false},
+		{"%h/.ssh/authorized_keys", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := isAdminDefaultAuthorizedKeysPath(tc.configured, admin); got != tc.want {
+			t.Errorf("isAdminDefaultAuthorizedKeysPath(%q) = %v, want %v", tc.configured, got, tc.want)
+		}
+	}
+}
