@@ -86,6 +86,10 @@ func (Planner) Build(profile Profile, snapshot Snapshot) (plan Plan) {
 	if !snapshot.SSHClient.Installed || !snapshot.SSHServer.Installed {
 		plan.Actions = append(plan.Actions, installSSHAction(profile, snapshot))
 	}
+	if snapshot.Platform == PlatformWindows && snapshot.SSHServer.Installed &&
+		snapshot.SSHServer.BinaryExists != nil && !*snapshot.SSHServer.BinaryExists {
+		plan.Actions = append(plan.Actions, repairSSHInstallAction(profile, snapshot))
+	}
 	configDrift := snapshot.SSHPort != profile.SSH.Port || snapshot.SSHPort == 0 ||
 		!snapshot.SSHConfigValid || !snapshot.SSHAuthenticationChecked ||
 		snapshot.SSHPasswordAuthentication != profile.SSH.PasswordAuthentication ||
@@ -138,6 +142,52 @@ func (Planner) Build(profile Profile, snapshot Snapshot) (plan Plan) {
 		plan.Actions = append(plan.Actions, enableSSHAction(profile, snapshot))
 	}
 	return plan
+}
+
+// repairSSHInstallAction restores a Windows OpenSSH Server installation whose
+// sshd executable has gone missing (typically quarantined by antivirus)
+// while the service registration and the Windows capability state still
+// report installed. It removes and re-adds the Windows capability. When the
+// server was installed outside Windows capabilities, the command fails with
+// actionable guidance instead of guessing.
+func repairSSHInstallAction(profile Profile, snapshot Snapshot) Action {
+	a := baseAction("repair-ssh-install", "repair_ssh_install", "ssh-packages", RiskMedium, "Reinstall the OpenSSH Server capability whose sshd.exe is missing", "The sshd service is registered but its executable is gone, usually because antivirus software quarantined it.")
+	a.RequiresElevation = true
+	a.Reversible = false
+	if snapshot.Platform != PlatformWindows {
+		a.Command = nil
+		return a
+	}
+	a.Command = psCommand(`$ErrorActionPreference='Stop'; $n='OpenSSH.Server~~~~0.0.1.0'; Stop-Service sshd -Force -ErrorAction SilentlyContinue; $c=Get-WindowsCapability -Online -Name $n -ErrorAction Stop; if($c.State -ne 'Installed'){throw 'sshd.exe is missing but OpenSSH Server is not a Windows capability; rerun the original OpenSSH installer or the offline payload instead'}; Write-Progress -Activity 'OpenSSH Server repair' -Status 'Removing broken capability'; Remove-WindowsCapability -Online -Name $n | Out-Null; Write-Progress -Activity 'OpenSSH Server repair' -Status 'Reinstalling'; Add-WindowsCapability -Online -Name $n | Out-Null`)
+	return a
+}
+
+// normalizeFirewallScope canonicalizes firewall scope strings so semantically
+// equal scopes compare equal across providers. Windows normalizes CIDR
+// notation into netmask form (100.64.0.0/10 -> 100.64.0.0/255.192.0.0),
+// which Go's net.ParseCIDR rejects; convert netmask form back to CIDR before
+// comparing, otherwise the planner would consider a correctly scoped rule
+// drifted on every Check and rebuild it on every Apply.
+func normalizeFirewallScope(scope string) string {
+	part := strings.TrimSpace(scope)
+	if part == "" {
+		return ""
+	}
+	if _, network, err := net.ParseCIDR(part); err == nil {
+		return strings.ToLower(network.String())
+	}
+	if ip, mask, ok := strings.Cut(part, "/"); ok {
+		parsedIP := net.ParseIP(strings.TrimSpace(ip)).To4()
+		parsedMask := net.ParseIP(strings.TrimSpace(mask)).To4()
+		if parsedIP != nil && parsedMask != nil {
+			if ones, bits := net.IPMask(parsedMask).Size(); bits == 32 {
+				if _, network, err := net.ParseCIDR(fmt.Sprintf("%s/%d", parsedIP, ones)); err == nil {
+					return strings.ToLower(network.String())
+				}
+			}
+		}
+	}
+	return strings.ToLower(part)
 }
 
 func installSSHAction(profile Profile, snapshot Snapshot) Action {
@@ -400,14 +450,11 @@ func firewallScopeSet(scopes []string) map[string]bool {
 			return value == ',' || unicode.IsSpace(value)
 		})
 		for _, part := range parts {
-			part = strings.TrimSpace(part)
+			part = normalizeFirewallScope(part)
 			if part == "" {
 				continue
 			}
-			if _, network, err := net.ParseCIDR(part); err == nil {
-				part = network.String()
-			}
-			result[strings.ToLower(part)] = true
+			result[part] = true
 		}
 	}
 	return result

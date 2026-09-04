@@ -2,6 +2,35 @@
 
 All notable changes are documented here.
 
+## [0.2.6] - 2026-09-05
+
+### Fixed
+
+- Windows firewall scope comparison now normalizes netmask-form scopes
+  (`100.64.0.0/255.192.0.0`) to CIDR (`100.64.0.0/10`). Windows rewrites
+  CIDR rules into netmask form on creation, which previously made every
+  Check report drift and every Apply rebuild an already-correct rule.
+- `broadFirewallScope` uses the same normalization so netmask-form Any
+  rules are still detected.
+
+### Added
+
+- Windows OpenSSH Server self-repair: the probe now records whether the
+  sshd executable actually exists on disk (antivirus quarantine can remove
+  it while the service and Windows capability still report installed), and
+  the planner emits a `repair-ssh-install` action that reinstalls the
+  Windows capability. If the server was installed outside Windows
+  capabilities, the action fails with explicit guidance instead of
+  guessing. Lessons from the OneClick minimal product line.
+
+### Fixed (2026-09-04)
+
+- authorized_keys merge commands wrap their arrays explicitly to survive
+  PowerShell 5.1 single-element pipeline unrolling.
+- The Check probe models Win32-OpenSSH's `administrators_authorized_keys`
+  redirection for admin-group users when `sshd -T` prints the stock
+  per-user default, so stock Windows hosts stay verifiable.
+
 ## [0.2.5] - 2026-08-01
 
 ### Changed

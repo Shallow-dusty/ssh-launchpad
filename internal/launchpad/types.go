@@ -7,7 +7,7 @@ const (
 	ControllerKeyBaseName = "id_ed25519_ssh_launchpad"
 )
 
-var Version = "0.2.5"
+var Version = "0.2.6"
 
 type Stage string
 
@@ -138,6 +138,11 @@ type Capability struct {
 	Installed bool   `json:"installed"`
 	Path      string `json:"path,omitempty"`
 	Version   string `json:"version,omitempty"`
+	// BinaryExists records whether the backing executable is actually present
+	// on disk. nil means the platform probe does not track it. Windows sets it
+	// explicitly: antivirus software can quarantine sshd.exe while the service
+	// registration and the Windows capability state still report installed.
+	BinaryExists *bool `json:"binaryExists,omitempty"`
 }
 
 type ServiceState struct {

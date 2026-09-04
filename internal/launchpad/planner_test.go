@@ -367,3 +367,66 @@ func TestAuthKeyEnablesOnePassTailnetPlanWithoutPhasing(t *testing.T) {
 		t.Fatalf("one-pass auth-key plan should be executable: %#v", plan.Blockers)
 	}
 }
+
+func TestFirewallScopeNetmaskFormMatchesCIDR(t *testing.T) {
+	// Windows reports a rule created with 100.64.0.0/10 back as
+	// 100.64.0.0/255.192.0.0; the planner must treat both as converged.
+	p := DefaultProfile()
+	p.Exposure.Mode = "tailnet"
+	s := healthySnapshot(PlatformWindows)
+	s.Firewall.Scopes = []string{"100.64.0.0/255.192.0.0 fd7a:115c:a1e0::/48"}
+	if got := normalizeFirewallScope("100.64.0.0/255.192.0.0"); got != "100.64.0.0/10" {
+		t.Fatalf("netmask scope normalized to %q", got)
+	}
+	if hasUnexpectedFirewallScopes(s.Firewall, exposureScopes(p, s), false) {
+		t.Fatalf("netmask-form scopes should not be flagged as unexpected: %v", exposureScopes(p, s))
+	}
+	plan := (Planner{}).Build(p, s)
+	for _, action := range plan.Actions {
+		if action.ID == "configure-firewall" {
+			t.Fatalf("expected no firewall action for netmask-form scopes, got %#v", plan.Actions)
+		}
+	}
+}
+
+func TestPlannerRepairsMissingSSHBinary(t *testing.T) {
+	p := DefaultProfile()
+	s := healthySnapshot(PlatformWindows)
+	missing := false
+	present := true
+
+	s.SSHServer.BinaryExists = &missing
+	plan := (Planner{}).Build(p, s)
+	found := false
+	for _, action := range plan.Actions {
+		if action.ID == "repair-ssh-install" {
+			found = true
+			if len(action.Command) == 0 {
+				t.Fatalf("repair action must carry a Windows command")
+			}
+		}
+		if action.ID == "install-ssh" {
+			t.Fatalf("install-ssh must not run when the service is registered; got %#v", plan.Actions)
+		}
+	}
+	if !found {
+		t.Fatalf("expected repair-ssh-install action, got %#v", plan.Actions)
+	}
+
+	s.SSHServer.BinaryExists = &present
+	plan = (Planner{}).Build(p, s)
+	for _, action := range plan.Actions {
+		if action.ID == "repair-ssh-install" {
+			t.Fatalf("repair-ssh-install must not be planned when the binary exists")
+		}
+	}
+
+	linux := healthySnapshot(PlatformLinux)
+	linux.SSHServer.BinaryExists = &missing
+	plan = (Planner{}).Build(p, linux)
+	for _, action := range plan.Actions {
+		if action.ID == "repair-ssh-install" {
+			t.Fatalf("repair-ssh-install is Windows-only")
+		}
+	}
+}

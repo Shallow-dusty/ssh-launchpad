@@ -173,16 +173,18 @@ func probeSSHServer(ctx context.Context, platform Platform, profile Profile) (Ca
 	switch platform {
 	case PlatformWindows:
 		service.Name = profile.Advanced.WindowsSSHService
-		script := `$s=Get-CimInstance Win32_Service -Filter "Name='sshd'" -ErrorAction SilentlyContinue; $l=Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object {$_.OwningProcess -in (Get-Process sshd -ErrorAction SilentlyContinue).Id} | Select-Object -First 1; [pscustomobject]@{installed=[bool]$s;running=($s.State -eq 'Running');startPolicy=$s.StartMode;port=$l.LocalPort;path=(Get-Command sshd.exe -ErrorAction SilentlyContinue).Source}|ConvertTo-Json -Compress`
+		script := `$s=Get-CimInstance Win32_Service -Filter "Name='sshd'" -ErrorAction SilentlyContinue; $l=Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object {$_.OwningProcess -in (Get-Process sshd -ErrorAction SilentlyContinue).Id} | Select-Object -First 1; $exe=$null; if($s){$sp=$s.PathName; if($sp -match '^"([^"]+)"'){$exe=$Matches[1]}elseif($sp){$exe=($sp -split ' ')[0]}}; $bin=[bool]($exe -and (Test-Path -LiteralPath $exe -PathType Leaf)); [pscustomobject]@{installed=[bool]$s;running=($s.State -eq 'Running');startPolicy=$s.StartMode;port=$l.LocalPort;path=(Get-Command sshd.exe -ErrorAction SilentlyContinue).Source;binaryExists=$bin}|ConvertTo-Json -Compress`
 		var v struct {
-			Installed   bool   `json:"installed"`
-			Running     bool   `json:"running"`
-			StartPolicy string `json:"startPolicy"`
-			Port        int    `json:"port"`
-			Path        string `json:"path"`
+			Installed    bool   `json:"installed"`
+			Running      bool   `json:"running"`
+			StartPolicy  string `json:"startPolicy"`
+			Port         int    `json:"port"`
+			Path         string `json:"path"`
+			BinaryExists bool   `json:"binaryExists"`
 		}
 		if runJSON(ctx, &v, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script) == nil {
-			return Capability{Installed: v.Installed, Path: v.Path}, ServiceState{Name: "sshd", Installed: v.Installed, Running: v.Running, StartPolicy: v.StartPolicy}, v.Port
+			binaryExists := v.BinaryExists
+			return Capability{Installed: v.Installed, Path: v.Path, BinaryExists: &binaryExists}, ServiceState{Name: "sshd", Installed: v.Installed, Running: v.Running, StartPolicy: v.StartPolicy}, v.Port
 		}
 	case PlatformMacOS:
 		service.Name = profile.Advanced.MacOSSSHLabel
@@ -678,7 +680,7 @@ func parsePortSpec(value string) (start, end int, exact, ok bool) {
 
 func broadFirewallScope(scope string) bool {
 	for _, value := range strings.Split(scope, ",") {
-		switch strings.ToLower(strings.TrimSpace(value)) {
+		switch normalizeFirewallScope(value) {
 		case "", "any", "*", "0.0.0.0/0", "::/0":
 			return true
 		}

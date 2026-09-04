@@ -1,8 +1,24 @@
 # Status
 
-Last locally verified: 2026-08-01
+Last locally verified: 2026-09-05
 
-Current release: [`v0.2.5`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.5)
+Current release: [`v0.2.6`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.6) (candidate; release CI pending)
+
+## v0.2.6 (2026-09-05, from OneClick field lessons)
+
+- Windows firewall scope comparison normalizes netmask-form scopes
+  (`100.64.0.0/255.192.0.0` → `100.64.0.0/10`); before this, a correctly
+  scoped rule reported drift on every Check and was rebuilt on every Apply.
+- Windows OpenSSH Server self-repair: when the sshd service is registered
+  but sshd.exe is missing (antivirus quarantine), the plan now offers a
+  capability reinstall instead of dead-ending in failed sshd probes. Gated
+  to Windows-capability installs; foreign installers fail with explicit
+  guidance. Validated end-to-end against the same failure mode in the
+  [OneClick minimal product line](https://github.com/Shallow-dusty/remote-onboarder).
+- authorized_keys merge commands survive PowerShell 5.1 single-element
+  pipeline unrolling (explicit array wrapping).
+- Check models Win32-OpenSSH's `administrators_authorized_keys` redirection
+  for admin-group users when `sshd -T` prints the stock per-user default.
 
 ## v0.2.5
 
