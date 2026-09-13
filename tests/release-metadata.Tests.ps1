@@ -30,8 +30,17 @@ Describe 'Release metadata contract' {
     }
 
     It 'runs the documented release security and concurrency gates' {
-        foreach ($gate in @('go test -race', 'staticcheck', 'govulncheck', 'gosec', 'pnpm audit')) {
+        foreach ($gate in @('go test -p 1 -race ./...', 'staticcheck', 'govulncheck', 'gosec', 'pnpm audit')) {
             $script:Workflow | Should -Match ([regex]::Escape($gate))
+        }
+    }
+
+    It 'pins the same govulncheck version in CI and release' {
+        $ci = Get-Content -LiteralPath (Join-Path $script:Root '.github\workflows\ci.yml') -Raw
+        $pin = 'golang.org/x/vuln/cmd/govulncheck@v1.6.0'
+        foreach ($workflow in @($ci, $script:Workflow)) {
+            $workflow | Should -Match ([regex]::Escape($pin))
+            $workflow | Should -Not -Match 'govulncheck@latest'
         }
     }
 

@@ -2,6 +2,13 @@
 
 Last locally verified: 2026-09-13
 
+CI follow-up: run `34735758977` passed Go on all three OSes, UI, Unix scripts
+and secret scanning, but failed a stale Pester race-command assertion and
+`govulncheck@latest` installation (Go 1.26 required). The follow-up pins the
+scanner to v1.6.0 and updates/tests the serialized race gate. Locally, all 12
+metadata Pester tests and the pinned scan under Go 1.25.13 passed. The new
+remote run must pass before treating CI as green.
+
 Current release: [`v0.2.6`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.6) (candidate; release CI pending)
 
 ## v0.2.6 (2026-09-05, from OneClick field lessons)
