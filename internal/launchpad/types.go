@@ -116,6 +116,8 @@ type Snapshot struct {
 	SSHServer                       Capability     `json:"sshServer"`
 	SSHService                      ServiceState   `json:"sshService"`
 	SSHPort                         int            `json:"sshPort,omitempty"`
+	SSHPorts                        []int          `json:"sshPorts,omitempty"`
+	SSHPolicyError                  string         `json:"sshPolicyError,omitempty"`
 	SSHConfigValid                  bool           `json:"sshConfigValid"`
 	SSHAuthenticationChecked        bool           `json:"sshAuthenticationChecked"`
 	SSHPasswordAuthentication       bool           `json:"sshPasswordAuthentication"`
@@ -252,6 +254,7 @@ type Journal struct {
 	Created       time.Time      `json:"created"`
 	ProfileName   string         `json:"profileName"`
 	Status        string         `json:"status"`
+	WriteAhead    bool           `json:"writeAhead,omitempty"`
 	Actions       []Action       `json:"actions"`
 	Results       []ActionResult `json:"results"`
 }

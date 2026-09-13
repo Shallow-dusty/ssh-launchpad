@@ -23,6 +23,7 @@ export interface ViewState {
     note: string;
   };
   report?: Report;
+  mutationReport?: Report;
   planReport?: Report;
   planError: string;
   verifyReport?: Report;
@@ -56,6 +57,9 @@ export function renderHome(state: ViewState, t: Translate): string {
         <button id="hero-start" class="button primary hero-action">${launchIcon()} ${t("homeHeroAction")}</button>
         <p class="hero-meta">${t("homeHeroMeta")}</p>
       </section>
+      <ol class="flow-preview" aria-label="${t("flowTitle")}">
+        ${([["flowCheck", "flowCheckBody"], ["flowReview", "flowReviewBody"], ["flowShare", "flowShareBody"]] as [MessageKey, MessageKey][]).map(([title, body], index) => `<li><span class="flow-number" aria-hidden="true">0${index + 1}</span><h2>${t(title)}</h2><p>${t(body)}</p></li>`).join("")}
+      </ol>
       <p class="roles-note">${infoIcon()}<span>${t("homeRolesNote")}</span></p>
       <nav class="home-links" aria-label="${t("wizardSetup")}">
         <button id="repair-link" class="text-link">${repairIcon()} ${t("homeRepairLink")}</button>
@@ -73,7 +77,7 @@ export function renderWizard(state: ViewState, t: Translate): string {
   const current = Math.min(state.step + 1, steps.length);
   return `
     <div class="wizard-header">
-      <button class="text-button" id="wizard-back">${backIcon()} ${t("backHome")}</button>
+      <button class="text-button" id="wizard-back" ${state.busy ? "disabled" : ""}>${backIcon()} ${t("backHome")}</button>
       <div>
         <p class="eyebrow">${state.mode === "setup" ? t("wizardSetup") : t("wizardRepair")}</p>
         <h1 class="wizard-title">${steps[state.step] ?? steps[0]}</h1>
@@ -83,7 +87,8 @@ export function renderWizard(state: ViewState, t: Translate): string {
       <span class="progress-label">${t("stepOf", { n: current, total: steps.length })} · <b>${steps[state.step] ?? steps[0]}</b></span>
       <div class="progress-bar"><i style="width:${(current / steps.length) * 100}%"></i></div>
     </div>
-    <div class="wizard-content">
+    <ol class="step-trail" aria-label="${t("flowTitle")}">${steps.map((label, index) => `<li ${index === state.step ? 'aria-current="step"' : ""} class="${index < state.step ? "past" : ""}"><span aria-hidden="true">${index < state.step ? checkIcon() : index + 1}</span>${escapeHtml(label)}</li>`).join("")}</ol>
+    <div class="wizard-content" aria-busy="${state.busy}">
       ${state.step === 0 ? renderCheckStep(state, t) : ""}
       ${state.step === 1 ? renderPrepareStep(state, t) : ""}
       ${state.step === 2 ? renderFinishStep(state, t) : ""}
@@ -141,7 +146,7 @@ function renderCheckStep(state: ViewState, t: Translate): string {
 function renderChecklist(state: ViewState, t: Translate): string {
   const items: MessageKey[] = ["checkItemSystem", "checkItemSsh", "checkItemNetwork", "checkItemPermission"];
   return `<article class="panel checklist-panel" aria-busy="true">
-    <h2>${t("checkingTitle")}</h2>
+    <h2>${t("checkingTitle")}</h2><p class="muted">${t("checkingEvidence")}</p>
     <ol class="check-list">${items.map((key, index) => `<li style="--i:${index}"><span class="check-state" aria-hidden="true"></span>${t(key)}</li>`).join("")}</ol>
   </article>`;
 }
@@ -197,6 +202,7 @@ function renderPrepareOutcome(
   const blockers = plan.blockers ?? [];
   if (state.installState === "failed") {
     return `${resultBanner("bad", t("installFailed"), state.installError || t("installFailedBody"), t)}
+      ${state.mutationReport?.journalPath ? `<section class="panel recovery-panel"><h2>${t("recoveryTitle")}</h2><p class="muted">${t("recoveryBody")}</p><div class="toolbar"><button id="rollback-last" class="button secondary" ${state.busy ? "disabled" : ""}>${repairIcon()} ${t("rollbackLast")}</button><button id="export-report-advanced" class="button secondary">${downloadIcon()} ${t("exportReport")}</button></div></section>` : ""}
       ${renderChangeList(state, t, plan)}
       ${planActionsRow(state, t, plan, keyReady, true)}`;
   }
@@ -274,7 +280,7 @@ function renderNetworkSummary(state: ViewState, t: Translate, tailnet = state.pr
 
 function renderKeySummary(state: ViewState, t: Translate, selected: string): string {
   const label = state.selectedKey?.label ?? "";
-  const value = selected ? `${escapeHtml(label)} · ${escapeHtml(fingerprintPreview(selected))}` : "—";
+  const value = selected ? [label, fingerprintPreview(selected)].filter(Boolean).map(escapeHtml).join(" · ") : "—";
   return `<div class="summary-row">
     <span class="summary-icon">${keyIcon()}</span>
     <div class="summary-text"><small>${t("summaryKey")}</small><b>${value}</b></div>
@@ -319,13 +325,22 @@ function renderChangeList(state: ViewState, t: Translate, plan: NonNullable<Repo
   if (actions.length === 0 && !selfCut) return "";
   return `
     <section class="change-list" aria-label="${t("whatHappens")}">
-      <h2>${t("whatHappens")}</h2>
-      <ol>${actions.map((action) => `<li><span class="change-icon">${humanActionIcon(action)}</span><span>${escapeHtml(humanActionLabel(action, state, t))}</span></li>`).join("")}</ol>
+      <h2>${t(state.installState === "failed" ? "lastPlanChanges" : "whatHappens")}</h2>
+      <ol>${actions.map((action) => `<li><span class="change-icon">${humanActionIcon(action)}</span><span>${escapeHtml(humanActionLabel(action, state, t))}${state.installState === "failed" ? `<small class="action-outcome">${lastActionOutcome(state, action.id, t)}</small>` : ""}${!action.reversible ? `<small class="action-caution">${t("irreversible")}</small>` : ""}</span></li>`).join("")}</ol>
       ${selfCut ? `<aside class="danger-note">${warningIcon()}<span>${t("errorSelfCut")}</span></aside>` : ""}
     </section>`;
 }
 
+function lastActionOutcome(state: ViewState, id: string, t: Translate): string {
+  const result = [...(state.mutationReport?.results ?? [])].reverse().find((item) => item.actionId === id);
+  const keys: Record<string, MessageKey> = { "rolled-back": "stateRecovered", "rollback-failed": "recoveryFailed", failed: "stateFailed", completed: "stateDone", "not-started": "stateNotRun" };
+  return t(result ? (keys[result.status] ?? "recoveryFailed") : "stateNotRun");
+}
+
 function planActionsRow(state: ViewState, t: Translate, plan: NonNullable<Report["plan"]>, keyReady: boolean, retry: boolean): string {
+  if (state.installState === "failed") {
+    return `<div class="wizard-actions"><button id="plan-back" class="button secondary">${backIcon()} ${t("backStep")}</button><button id="review-remaining" class="button primary" ${state.busy ? "disabled" : ""}>${t("replanAfterVerify")}</button></div>`;
+  }
   const blockers = plan.blockers ?? [];
   const disabled = state.busy || !keyReady;
   const label = state.mode === "repair"
@@ -344,16 +359,19 @@ function renderInstallProgress(state: ViewState, t: Translate): string {
     ${resultBanner("info", waiting ? t("waitingUacTitle") : repairing ? t("repairingTitle") : t("installingTitle"), waiting ? t("waitingUacBody") : repairing ? t("repairingBody") : t("installingBody"), t)}
     <ol class="install-list">${actions.map((action) => {
       const status = actionStatus(state.progress, action.id);
-      return `<li class="${status}"><span class="install-state" aria-hidden="true">${status === "done" ? checkIcon() : status === "running" ? `<i class="spinner-mini"></i>` : ""}</span><span>${escapeHtml(humanActionLabel(action, state, t))}</span><small>${status === "done" ? t("stateDone") : status === "running" ? t("stateRunning") : t("stateWaiting")}</small></li>`;
-    }).join("")}</ol>`;
+      return `<li class="${status}"><span class="install-state" aria-hidden="true">${status === "done" ? checkIcon() : status === "running" ? `<i class="spinner-mini"></i>` : ""}</span><span>${escapeHtml(humanActionLabel(action, state, t))}</span><small>${status === "done" ? t("stateDone") : status === "running" ? t("stateRunning") : status === "failed" ? t("stateFailed") : t("stateWaiting")}</small></li>`;
+    }).join("")}</ol>
+    <p class="small-note">${t("closeWhileBusy")}</p>
+    <details class="technical-details"><summary>${t("actionDetails")}</summary><pre>${escapeHtml(state.progress.slice(-30).map((event) => simpleEvent(state.language, event)).join("\n") || t("stateWaiting"))}</pre></details>`;
 }
 
-function actionStatus(progress: Array<{ kind: string; actionId?: string }>, actionId: string): "pending" | "running" | "done" {
-  let status: "pending" | "running" | "done" = "pending";
+function actionStatus(progress: Array<{ kind: string; actionId?: string }>, actionId: string): "pending" | "running" | "done" | "failed" {
+  let status: "pending" | "running" | "done" | "failed" = "pending";
   for (const event of progress) {
     if (event.actionId !== actionId) continue;
     if (event.kind === "started") status = "running";
     if (event.kind === "completed") status = "done";
+    if (event.kind === "error") status = "failed";
   }
   return status;
 }
@@ -379,7 +397,10 @@ function renderFinishStep(state: ViewState, t: Translate): string {
   if (!ready) {
     return `
       ${resultBanner("warn", t("verifyPending"), t("verifyPendingBody"), t)}
-      <div class="wizard-actions"><button id="verify-again" class="button secondary">${t("verifyRetry")}</button><button id="finish" class="button primary">${t("finishAction")}</button></div>`;
+      ${report?.error ? resultBanner("warn", t("verifyFailed"), report.error, t) : ""}
+      ${report?.plan?.blockers?.length ? `<ul class="fix-list">${report.plan.blockers.map((blocker) => `<li>${warningIcon()}<span>${escapeHtml(blocker)}</span></li>`).join("")}</ul>` : ""}
+      ${report?.plan ? renderChangeList(state, t, report.plan) : ""}
+      <div class="wizard-actions"><button id="verify-again" class="button secondary">${t("verifyRetry")}</button><button id="review-remaining" class="button primary">${t("replanAfterVerify")}</button></div>`;
   }
   return `
     <section class="done-hero">
@@ -389,6 +410,8 @@ function renderFinishStep(state: ViewState, t: Translate): string {
       <div class="command-box"><code>${escapeHtml(command)}</code><button id="copy-command" class="button primary">${copyIcon()} ${t("copyCommand")}</button></div>
       <p class="done-facts">${t("doneFacts", { host: escapeHtml(snapshot?.hostname ?? "—"), address: escapeHtml(address ?? "—"), port: state.profile.ssh.port })}</p>
     </section>
+    <aside class="info-note">${infoIcon()}<span>${t("localVerifyOnly")}</span></aside>
+    <div class="handoff-panel"><button id="copy-handoff" class="button secondary">${copyIcon()} ${t("copyHandoff")}</button><p class="small-note">${t("handoffHint")}</p></div>
     <section class="next-steps">
       <h2>${t("firstConnectTitle")}</h2>
       <ol>
@@ -443,7 +466,7 @@ export function renderAdvanced(state: ViewState, t: Translate): string {
 
     <section class="panel"><h2>${t("groupRecovery")}</h2>
       <p class="muted">${t("recoveryNote")}</p>
-      <div class="toolbar"><button id="rollback-last" class="button secondary" ${state.report?.journalPath ? "" : "disabled"}>${t("rollbackLast")}</button><button id="check-update" class="button secondary">${t("updateCheck")}</button></div>
+      <div class="toolbar"><button id="rollback-last" class="button secondary" ${state.mutationReport?.journalPath && !state.busy ? "" : "disabled"}>${t("rollbackLast")}</button><button id="check-update" class="button secondary">${t("updateCheck")}</button></div>
       <p class="small-note">${t("unsignedNotice")}</p>
       <div class="panel-footer"><span id="advanced-status">${t("autoApplyNote")}</span></div>
     </section>`;
@@ -508,6 +531,7 @@ export function checkIssues(snapshot: Snapshot, profile: Profile): MessageKey[] 
   if (!snapshot.sshServer.installed || !snapshot.sshService.installed) issues.push("actionInstall");
   if (
     snapshot.sshPort !== profile.ssh.port || snapshot.sshPort === 0 || !snapshot.sshConfigValid
+    || (snapshot.sshPorts?.length ?? 0) > 1 || !!snapshot.sshPolicyError
     || !snapshot.sshAuthenticationChecked || snapshot.sshPasswordAuthentication !== profile.ssh.passwordAuthentication
     || snapshot.sshKbdInteractiveAuthentication || !snapshot.sshPubkeyAuthentication
   ) issues.push("actionConfig");

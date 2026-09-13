@@ -39,7 +39,7 @@ test("Chinese first-run wizard completes the recommended mock path", async ({ pa
   await page.getByRole("checkbox").check();
   await installDialog.getByRole("button", { name: "开始安装", exact: true }).click();
 
-  await expect(page.getByRole("heading", { name: "这台电脑可以被远程连接了" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "本机配置已通过检查" })).toBeVisible();
   await expect(page.getByText(/ssh -p 22/)).toBeVisible();
   await expect(page.getByText("第一次连接时")).toBeVisible();
 });
@@ -268,7 +268,7 @@ test("second visit is idempotent and narrow layout remains usable", async ({ pag
   await startSetup(page);
   await expect(page.getByRole("heading", { name: "这台电脑已经可以被远程连接" })).toBeVisible();
   await page.getByRole("button", { name: "去验证" }).click();
-  await expect(page.getByRole("heading", { name: "这台电脑可以被远程连接了" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "本机配置已通过检查" })).toBeVisible();
   await expect(page.locator("body")).not.toHaveCSS("min-width", "900px");
 });
 

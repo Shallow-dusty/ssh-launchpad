@@ -45,6 +45,8 @@ export interface Snapshot {
   sshServer: { installed: boolean; version?: string };
   sshService: { name?: string; installed: boolean; running: boolean; startPolicy?: string };
   sshPort?: number;
+  sshPorts?: number[];
+  sshPolicyError?: string;
   sshConfigValid: boolean;
   sshAuthenticationChecked: boolean;
   sshPasswordAuthentication: boolean;

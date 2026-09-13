@@ -8,7 +8,9 @@ import (
 	"time"
 )
 
-var generatedPlanTimestamp = regexp.MustCompile(`\d{8}T\d{6}Z`)
+var generatedPlanTimestamp = regexp.MustCompile(`\d{8}T\d{6}(?:\.\d{9})?Z`)
+
+func backupStamp() string { return time.Now().UTC().Format("20060102T150405.000000000Z") }
 
 // PlanDigest binds confirmation to the complete profile and executable plan.
 // Generated backup timestamps are normalized so an unchanged re-plan has the

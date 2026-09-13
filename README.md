@@ -2,13 +2,15 @@
 
 不用命令行，也不用先学 SSH。SSH Launchpad 用一个中文向导，让这台电脑可以被你从另一台电脑安全连接。
 
-![SSH Launchpad 中文首屏](docs/images/v0.2-home-zh.png)
+> 当前源码为 v0.2.6 候选；可下载版本以 Release 为准。验证范围见 [STATUS](STATUS.md)。
+>
+> [早期 v0.2 界面参考](docs/images/v0.2-home-zh.png)仅作历史展示；现行交互见[前端优化记录](docs/ui-refinement-2026-09.md)。
 
 ## Windows：下载后只做三步
 
 1. 在 [最新 Release](https://github.com/Shallow-dusty/ssh-launchpad/releases/latest) 下载
    `SSH-Launchpad_*_Windows_x64_Installer_UNSIGNED.exe`（推荐）。
-2. 双击安装并打开，首屏选择“让这台电脑可以被远程连接”。
+2. 双击安装并打开，在需要被连接的电脑上选择“开始”。
 3. 按“检查 → 准备安装 → 完成”完成向导；只有确认安装内容后才会请求 Windows 权限。
 
 普通用户直接启动即可；真正安装系统组件时才会出现 Windows UAC 权限确认。取消确认不会继续执行。
@@ -51,7 +53,8 @@
 - Check 和 Plan 只读；Verify 不提权。GUI 的“准备安装”也只展示已审阅的内容。
 - Apply 会逐项说明“安装什么、打开哪个端口、谁能连接”后再确认。
 - 如果操作可能切断当前唯一 SSH/Tailscale 连接，默认阻止并给出本地执行、第二通道或延迟验证方案。
-- 重复运行只处理差异；失败后停止后续步骤并按执行记录恢复可逆改动。
+- 重复运行先重新检查差异；失败后停止后续步骤，按执行记录尝试恢复可逆改动。恢复失败或旧后台任务需人工核查，不能承诺完整撤销。
+- UFW 自定义 raw rules 不在当前自动清单范围内；此类目标需要人工检查，详见[验证盲区](docs/audit-2026-09.md)。
 - 下载必须使用可信 HTTPS 来源并通过 SHA-256，不会关闭 TLS 校验。
 - 默认不收集遥测；导出的支持报告会脱敏主机名、IP、用户名路径、公钥注释和凭据样式字段。
 
@@ -65,6 +68,7 @@ Linux 文件管理器也可能要求先允许执行；详情见包内双语离�
 还需要相应平台依赖。仓库提供
 [`new-offline-pack`](docs/offline-pack.md) 命令生成带来源、许可声明和 SHA-256 的本地依赖包；
 不具备再分发许可的第三方安装器不会进入源码或标准 Release。
+目前仅 Windows Tailscale 适配器支持 pinned `offlineBundle`；OpenSSH 离线安装应先使用平台可信的包管理/servicing 工具完成，不支持的组合会在 Plan 阶段阻止。
 
 ## CLI 与自动化
 
@@ -94,13 +98,15 @@ open `Start SSH Launchpad.cmd`. The flow is Check → Ready to install → Finis
 
 - [SSH-Launchpad OneClick（Remote-Onboarder）](https://github.com/Shallow-dusty/remote-onboarder)：
   极简 Windows x64 单文件产品线 —— 一个内嵌 OpenSSH/Tailscale MSI 与密钥的
-  IExpress 自解压 EXE，双击即完成接入，无需运行时或安装向导。适合把目标机器
-  配好后直接发给对方的一次性场景。
+  IExpress 自解压 EXE，接收方双击并同意 UAC 后按终端提示操作，无需 WebView2。
+  适合协助者预置公钥/短期凭据后发给可信接收方的一次性场景；不强制覆盖陌生网络策略。
 
 ## 文档
 
 - [当前状态](STATUS.md)
-- [当前工作树审计](docs/audit-current-2026-08.md)
+- [完整文档导航](docs/README.md)
+- [九月审计与验证边界](docs/audit-2026-09.md)
+- [前端设计与交互记录](docs/ui-refinement-2026-09.md)
 - [版本变化](CHANGELOG.md)
 - [平台支持与验证边界](docs/platform-support.md)
 - [架构](docs/architecture.md)

@@ -54,14 +54,34 @@ service and firewall state is never inferred from it.
 
 The planner produces inspectable commands, risk, elevation, reversibility, and
 self-cut metadata. A canonical SHA-256 digest binds confirmation to the reviewed
-profile and executable plan; Apply aborts if a fresh Plan differs. The executor
-refuses unconfirmed work and writes a journaled record of intended and
-completed actions before mutations. The journal carries a self-computed digest
-that flags accidental corruption at rollback time; a mismatch downgrades to a
-warning rather than blocking recovery. Platform commands are intentionally declarative so unit tests can
+profile and executable plan; Apply aborts if a fresh Plan differs. A system
+mutation lock is held across that final re-plan and all Apply/Rollback work, so
+desktop, CLI, and elevated helpers cannot interleave changes. The executor
+refuses unconfirmed work and writes a journaled record of intended actions,
+including the in-flight action before its first possible side effect, plus
+completed and rollback actions. The journal carries a self-computed digest that
+flags accidental corruption at rollback time; a mismatch downgrades to a
+warning rather than blocking recovery. Elevated rollback additionally binds
+the exact reviewed journal bytes in the elevation request. Platform commands
+are intentionally declarative so unit tests can
 validate them on any CI runner. Windows-generated commands are
 parsed by PowerShell; Unix-generated commands are checked by `sh -n` and
 ShellCheck on native CI.
+
+## Delayed actions and recovery
+
+`--schedule-risky` now means a cancellable in-process delay with the mutation
+lock retained, not a detached scheduler job. Keep the process running. The
+actual action must finish before Apply records `completed`; a successful
+scheduler registration is never treated as an applied system change. Both an
+explicit self-cut override and delayed self-cut work require a reachable
+external verification endpoint. This preflight is TCP evidence, not proof that
+the endpoint is an independent recovery channel; the operator must provide one.
+
+Old journals with detached `scheduled` actions cannot be automatically recovered
+safely: stop/verify the old task externally and review its backups manually.
+New write-ahead journals include the in-flight action in recovery. Irreversible
+interrupted work stays an incomplete recovery, never a successful full restore.
 
 ## Report and exit contract
 

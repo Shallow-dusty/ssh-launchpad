@@ -48,6 +48,21 @@ integrity-checked request file before the helper consumes it. A hard process or
 machine crash can leave that file until the next stale-job cleanup; use
 one-time or short-lived keys and revoke any key whose workflow was interrupted.
 
+## Known verification gaps
+
+- UFW probing reads `status verbose`, not before/after raw rule files or the
+  whole nftables/iptables ruleset. Undisplayed rules can invalidate the apparent
+  scope. Customized hosts need external review; this is a coverage gap, not an
+  automatic fail-closed guarantee.
+- Atomic private-file replacement on Unix is not Windows DACL certification.
+  Keep credential-bearing cards in access-controlled directories.
+- A reachable verification endpoint is TCP evidence only; the operator must
+  establish that a genuinely independent recovery channel exists.
+- Local success cannot prove controller-side public-key authentication. Native
+  installer/isolated-VM acceptance remains distinct from mocks and cross-builds.
+
+See [current audit evidence](audit-2026-09.md).
+
 ## Current out of scope
 
 - Protecting a host already controlled by an administrator-level attacker.
@@ -58,22 +73,27 @@ one-time or short-lived keys and revoke any key whose workflow was interrupted.
 
 ## Deliberate simplifications
 
-Three mechanisms were reviewed as over-engineered for this threat model and
+Several mechanisms were reviewed as over-engineered for this threat model and
 simplified after the v0.2.3 hardening (the full-hardening implementation is
 preserved on the `archive/v0.2.3-full-hardening` branch). Do not re-add them
 without a concrete threat:
 
-- Effective-SSH probing uses a single global `sshd -T` dump instead of a
-  per-connection `sshd -T -C` matrix; `Match`-dependent policy fails closed as
-  unchecked (see `docs/platform-support.md`).
+- Effective-SSH probing uses the global `sshd -T` dump plus conservative
+  source policy inspection. Unsupported `Match`, custom `ListenAddress`,
+  included `Port`, recursive `Include`, or other connection-dependent policy
+  fails closed (see `docs/platform-support.md`); the tool does not claim
+  per-connection certainty from the global dump alone.
 - The Windows rollback journal drops the owner-SID check; reparse-point and
   directory rejection remains, matching the unix `O_NOFOLLOW` checks.
 - The interactive process lock is an exclusive-create PID file with stale-PID
   recovery instead of random tokens and compare-before-delete; the residual
-  unlock race is accepted as harmless.
+  unlock race is accepted as harmless. It is UI-only; system mutations use the
+  separate cross-entry-point Apply/Rollback lock.
 - The rollback journal digest is self-computed, so it only flags accidental
   corruption; a mismatch warns and rollback continues instead of refusing the
-  recovery path over a checksum it could recompute.
+  recovery path over a checksum it could recompute. Elevated rollback
+  separately binds the exact reviewed journal bytes with a digest in the
+  integrity-checked elevation request.
 - The GUI no longer re-plans before elevation: the reviewed plan's no-change
   and elevation flags act as routing hints, while the authoritative digest
   check stays inside the engine's own re-plan in Apply, failing closed on

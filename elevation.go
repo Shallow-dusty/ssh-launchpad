@@ -96,7 +96,13 @@ func runElevatedHelper(args []string) int {
 			_ = eventFile.Sync()
 		}
 	})
-	report, applyErr := engine.Apply(context.Background(), request.Profile, request.Options)
+	var report launchpad.Report
+	var applyErr error
+	if request.Operation == launchpad.StageRollback {
+		report, applyErr = engine.Executor.RollbackVerified(context.Background(), request.JournalPath, request.JournalDigest)
+	} else {
+		report, applyErr = engine.Apply(context.Background(), request.Profile, request.Options)
+	}
 	response := elevationprotocol.Response{Report: report}
 	if applyErr != nil {
 		response.Error = applyErr.Error()

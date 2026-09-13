@@ -18,7 +18,8 @@ Describe 'Release metadata contract' {
     }
 
     It 'contains notes for the current release candidate' {
-        Test-Path -LiteralPath (Join-Path $script:Root '.github\release-notes-v0.2.5.md') |
+        $version = (Get-Content -LiteralPath (Join-Path $script:Root 'frontend\package.json') -Raw | ConvertFrom-Json).version
+        Test-Path -LiteralPath (Join-Path $script:Root ".github\release-notes-v$version.md") |
             Should -BeTrue
     }
 

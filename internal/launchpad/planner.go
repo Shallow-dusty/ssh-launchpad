@@ -1,7 +1,6 @@
 package launchpad
 
 import (
-	"encoding/base64"
 	"fmt"
 	"net"
 	"path/filepath"
@@ -83,14 +82,25 @@ func (Planner) Build(profile Profile, snapshot Snapshot) (plan Plan) {
 			return plan
 		}
 	}
-	if !snapshot.SSHClient.Installed || !snapshot.SSHServer.Installed {
-		plan.Actions = append(plan.Actions, installSSHAction(profile, snapshot))
+	if !snapshot.SSHClient.Installed || !snapshot.SSHServer.Installed ||
+		(snapshot.Platform == PlatformWindows && snapshot.SSHServer.BinaryExists != nil && !*snapshot.SSHServer.BinaryExists) {
+		if profile.Download.Strategy != "official" && profile.Download.Strategy != "package-manager" {
+			plan.Blockers = append(plan.Blockers, "OpenSSH installation supports only the configured system package manager; offline/mirror/proxy/cache strategies are unsupported. No online fallback will be attempted.")
+			return plan
+		}
+		if snapshot.SSHServer.Installed && snapshot.SSHServer.BinaryExists != nil && !*snapshot.SSHServer.BinaryExists {
+			plan.Actions = append(plan.Actions, repairSSHInstallAction(profile, snapshot))
+		} else {
+			plan.Actions = append(plan.Actions, installSSHAction(profile, snapshot))
+		}
+		plan.Warnings = append(plan.Warnings, "Phased setup: restore OpenSSH first, then Check and review a new plan before authentication/firewall changes. The package manager may start its default service.")
+		return plan
 	}
-	if snapshot.Platform == PlatformWindows && snapshot.SSHServer.Installed &&
-		snapshot.SSHServer.BinaryExists != nil && !*snapshot.SSHServer.BinaryExists {
-		plan.Actions = append(plan.Actions, repairSSHInstallAction(profile, snapshot))
+	if snapshot.SSHPolicyError != "" {
+		plan.Blockers = append(plan.Blockers, snapshot.SSHPolicyError)
+		return plan
 	}
-	configDrift := snapshot.SSHPort != profile.SSH.Port || snapshot.SSHPort == 0 ||
+	configDrift := snapshot.SSHPort != profile.SSH.Port || snapshot.SSHPort == 0 || len(snapshot.SSHPorts) > 1 ||
 		!snapshot.SSHConfigValid || !snapshot.SSHAuthenticationChecked ||
 		snapshot.SSHPasswordAuthentication != profile.SSH.PasswordAuthentication ||
 		snapshot.SSHKbdInteractiveAuthentication || !snapshot.SSHPubkeyAuthentication
@@ -227,6 +237,10 @@ func installTailscaleAction(profile Profile, snapshot Snapshot) Action {
 	a := baseAction("install-tailscale", "install_tailscale", "transport", RiskMedium, "Install Tailscale as the optional secure transport", "Tailnet mode is requested and Tailscale is missing.")
 	a.RequiresElevation = true
 	a.Reversible = false
+	if profile.Download.Strategy != "official" && profile.Download.Strategy != "package-manager" && !(profile.Download.Strategy == "offline" && snapshot.Platform == PlatformWindows) {
+		a.Reason = "The Tailscale installer does not support this download strategy. Select the system package manager or a verified Windows offline installer; no fallback will be attempted."
+		return a
+	}
 	switch snapshot.Platform {
 	case PlatformWindows:
 		if profile.Download.Strategy == "offline" {
@@ -261,44 +275,7 @@ func configureSSHAction(profile Profile, snapshot Snapshot) Action {
 	a := baseAction("configure-sshd", "configure_sshd", "ssh-config", RiskHigh, fmt.Sprintf("Set SSH port %d and key-oriented authentication", profile.SSH.Port), "The effective SSH port, configuration validity, or authentication policy does not match the profile.")
 	a.RequiresElevation = true
 	a.Reversible = true
-	stamp := time.Now().UTC().Format("20060102T150405Z")
-	block := fmt.Sprintf("# BEGIN SSH-LAUNCHPAD\nPort %d\nPubkeyAuthentication yes\nPasswordAuthentication %s\nKbdInteractiveAuthentication no\nChallengeResponseAuthentication no\n# END SSH-LAUNCHPAD\n", profile.SSH.Port, yesNo(profile.SSH.PasswordAuthentication))
-	encoded := base64.StdEncoding.EncodeToString([]byte(block))
-	switch snapshot.Platform {
-	case PlatformWindows:
-		config := `C:\ProgramData\ssh\sshd_config`
-		backup := config + ".ssh-launchpad-" + stamp + ".bak"
-		wasRunning := psBool(snapshot.SSHService.Running)
-		script := fmt.Sprintf(`$ErrorActionPreference='Stop'; $p='%s'; $b='%s'; $wasRunning=%s; if(!(Test-Path $p)){Copy-Item "$env:WINDIR\System32\OpenSSH\sshd_config_default" $p}; Copy-Item $p $b -Force; try{$raw=Get-Content $p -Raw; $raw=[regex]::Replace($raw,'(?ms)^# BEGIN SSH-LAUNCHPAD\r?\n.*?^# END SSH-LAUNCHPAD\r?\n?',''); $block=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('%s')); [IO.File]::WriteAllText($p,($block+$raw.TrimStart()),[Text.ASCIIEncoding]::new()); & "$env:WINDIR\System32\OpenSSH\sshd.exe" -t -f $p; if($LASTEXITCODE -ne 0){throw 'sshd_config validation failed'}; if($wasRunning){Restart-Service sshd -ErrorAction Stop}}catch{Copy-Item $b $p -Force; if($wasRunning){Restart-Service sshd -ErrorAction SilentlyContinue}; throw}`, config, backup, wasRunning, encoded)
-		a.Command = psCommand(script)
-		rollback := fmt.Sprintf(`Copy-Item '%s' '%s' -Force`, backup, config)
-		if snapshot.SSHService.Running {
-			rollback += `; Restart-Service sshd`
-		}
-		a.RollbackCommand = psCommand(rollback)
-	case PlatformLinux, PlatformWSL:
-		path := "/etc/ssh/sshd_config"
-		backup := path + "." + stamp + ".bak"
-		wasRunning := shellBool(snapshot.SSHService.Running)
-		service := shQuote(serviceName(profile, snapshot))
-		script := fmt.Sprintf(`set -eu; path=%s; backup=%s; was_running=%s; service=%s; cp -p "$path" "$backup"; tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT HUP INT TERM; printf %%s %s | base64 -d > "$tmp"; awk 'BEGIN{managed=0} /^# BEGIN SSH-LAUNCHPAD$/{managed=1;next} /^# END SSH-LAUNCHPAD$/{managed=0;next} !managed{print}' "$path" >> "$tmp"; cat "$tmp" > "$path"; if ! sshd -t; then cp -p "$backup" "$path"; exit 1; fi; if [ "$was_running" = true ] && ! systemctl restart "$service"; then cp -p "$backup" "$path"; systemctl restart "$service" || true; exit 1; fi`, shQuote(path), shQuote(backup), wasRunning, service, shQuote(encoded))
-		a.Command = unixCommand(script)
-		rollback := fmt.Sprintf("cp -p %s %s", shQuote(backup), shQuote(path))
-		if snapshot.SSHService.Running {
-			rollback += fmt.Sprintf("; systemctl restart %s", service)
-		}
-		a.RollbackCommand = unixCommand(rollback)
-	case PlatformMacOS:
-		path := "/etc/ssh/sshd_config"
-		backup := path + "." + stamp + ".bak"
-		wasRunning := shellBool(snapshot.SSHService.Running)
-		a.Command = unixCommand(fmt.Sprintf(`set -eu; path=%s; backup=%s; was_running=%s; cp -p "$path" "$backup"; tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT HUP INT TERM; printf %%s %s | base64 -D > "$tmp"; awk 'BEGIN{managed=0} /^# BEGIN SSH-LAUNCHPAD$/{managed=1;next} /^# END SSH-LAUNCHPAD$/{managed=0;next} !managed{print}' "$path" >> "$tmp"; cat "$tmp" > "$path"; if ! /usr/sbin/sshd -t; then cp -p "$backup" "$path"; exit 1; fi; if [ "$was_running" = true ] && ! launchctl kickstart -k system/com.openssh.sshd; then cp -p "$backup" "$path"; launchctl kickstart -k system/com.openssh.sshd || true; exit 1; fi`, shQuote(path), shQuote(backup), wasRunning, shQuote(encoded)))
-		rollback := fmt.Sprintf("cp -p %s %s", shQuote(backup), shQuote(path))
-		if snapshot.SSHService.Running {
-			rollback += "; launchctl kickstart -k system/com.openssh.sshd"
-		}
-		a.RollbackCommand = unixCommand(rollback)
-	}
+	a.Command, a.RollbackCommand = configCommands(profile, snapshot)
 	a.Params = map[string]string{"port": strconv.Itoa(profile.SSH.Port), "managedBlock": "SSH-LAUNCHPAD"}
 	return a
 }
@@ -307,27 +284,7 @@ func configureKeysAction(profile Profile, snapshot Snapshot) Action {
 	a := baseAction("configure-authorized-keys", "configure_keys", "authentication", RiskHigh, "Merge the declared SSH public keys", "One or more declared controller public keys are not present. Existing keys are preserved and the file is backed up.")
 	a.RequiresElevation = snapshot.Platform == PlatformWindows && snapshot.TargetUserIsAdmin
 	a.Reversible = true
-	content := strings.Join(profile.SSH.PublicKeys, "\n") + "\n"
-	encoded := base64.StdEncoding.EncodeToString([]byte(content))
-	stamp := time.Now().UTC().Format("20060102T150405Z")
-	switch snapshot.Platform {
-	case PlatformWindows:
-		path, _ := authorizedKeysPath(snapshot)
-		backup := path + ".ssh-launchpad-" + stamp + ".bak"
-		grantees := `@('*S-1-5-18:F','*S-1-5-32-544:F')`
-		if !snapshot.TargetUserIsAdmin {
-			grantees = `@('*S-1-5-18:F',('*'+[Security.Principal.WindowsIdentity]::GetCurrent().User.Value+':F'))`
-		}
-		script := fmt.Sprintf(`$ErrorActionPreference='Stop'; $p='%s'; $b='%s'; $dir=Split-Path $p; New-Item -ItemType Directory -Path $dir -Force | Out-Null; $had=Test-Path $p; if($had){Copy-Item $p $b -Force}; try{$existing=[object[]]@(if($had){Get-Content $p | ForEach-Object {$_.Trim()} | Where-Object {$_}}); $wanted=[object[]]@([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('%s')) -split '\r?\n' | ForEach-Object {$_.Trim()} | Where-Object {$_}); $merged=[object[]]@($existing+$wanted | Select-Object -Unique); [IO.File]::WriteAllLines($p,$merged,[Text.ASCIIEncoding]::new()); & icacls.exe $p /inheritance:r | Out-Null; if($LASTEXITCODE -ne 0){throw 'failed to disable inherited ACLs'}; $grantees=%s; & icacls.exe $p /grant:r $grantees | Out-Null; if($LASTEXITCODE -ne 0){throw 'failed to set authorized_keys ACLs'}}catch{if(Test-Path $b){Copy-Item $b $p -Force}elseif(!$had){Remove-Item $p -Force -ErrorAction SilentlyContinue}; throw}`, path, backup, encoded, grantees)
-		a.Command = psCommand(script)
-		a.RollbackCommand = psCommand(fmt.Sprintf(`if(Test-Path '%s'){Copy-Item '%s' '%s' -Force}else{Remove-Item '%s' -Force -ErrorAction SilentlyContinue}`, backup, backup, path, path))
-	default:
-		backupSuffix := ".ssh-launchpad-" + stamp + ".bak"
-		targetPrelude := `target_user="${SUDO_USER:-$(id -un)}"; if command -v getent >/dev/null 2>&1; then target_home="$(getent passwd "$target_user" | cut -d: -f6)"; elif command -v dscacheutil >/dev/null 2>&1; then target_home="$(dscacheutil -q user -a name "$target_user" | awk '/^dir:/{print $2; exit}')"; else target_home="$HOME"; fi; [ -n "$target_home" ]`
-		script := fmt.Sprintf(`set -eu; %s; ssh_dir="$target_home/.ssh"; if [ -L "$ssh_dir" ] || { [ -e "$ssh_dir" ] && [ ! -d "$ssh_dir" ]; }; then echo 'authorized_keys directory must not be a symlink or non-directory' >&2; exit 1; fi; mkdir -p "$ssh_dir"; if [ -L "$ssh_dir" ]; then echo 'authorized_keys directory changed to a symlink' >&2; exit 1; fi; chmod 700 "$ssh_dir"; path="$ssh_dir/authorized_keys"; backup="$path%s"; if [ -L "$path" ] || [ -L "$backup" ]; then echo 'authorized_keys and backup paths must not be symlinks' >&2; exit 1; fi; if [ -e "$path" ] && [ ! -f "$path" ]; then echo 'authorized_keys must be a regular file' >&2; exit 1; fi; if [ -e "$backup" ]; then echo 'authorized_keys backup already exists' >&2; exit 1; fi; if [ -f "$path" ]; then cp -p "$path" "$backup"; else (set -C; : > "$path"); fi; tmp="$(mktemp "$ssh_dir/.ssh-launchpad.tmp.XXXXXX")"; trap 'rm -f "$tmp"' EXIT HUP INT TERM; { cat "$path"; printf %%s %s | base64 -d; } | awk 'NF && !seen[$0]++' > "$tmp"; chmod 600 "$tmp"; mv "$tmp" "$path"; chmod 600 "$path"; if [ "$(id -u)" -eq 0 ] && [ "$target_user" != root ]; then chown -R "$target_user" "$ssh_dir"; fi`, targetPrelude, backupSuffix, shQuote(encoded))
-		a.Command = unixCommand(script)
-		a.RollbackCommand = unixCommand(fmt.Sprintf(`set -eu; %s; ssh_dir="$target_home/.ssh"; path="$ssh_dir/authorized_keys"; backup="$path%s"; if [ -L "$ssh_dir" ] || [ -L "$path" ] || [ -L "$backup" ]; then echo 'authorized_keys rollback paths must not be symlinks' >&2; exit 1; fi; if [ -e "$path" ] && [ ! -f "$path" ]; then echo 'authorized_keys rollback target must be a regular file' >&2; exit 1; fi; if [ -f "$backup" ]; then cp -p "$backup" "$path"; else rm -f "$path"; fi; if [ "$(id -u)" -eq 0 ] && [ "$target_user" != root ]; then chown "$target_user" "$path" 2>/dev/null || true; fi`, targetPrelude, backupSuffix))
-	}
+	a.Command, a.RollbackCommand = keyCommands(profile, snapshot)
 	a.Params = map[string]string{"keyCount": strconv.Itoa(len(profile.SSH.PublicKeys))}
 	return a
 }
@@ -338,31 +295,57 @@ func enableSSHAction(profile Profile, snapshot Snapshot) Action {
 	a.Reversible = true
 	switch snapshot.Platform {
 	case PlatformWindows:
-		a.Command = psCommand(`Set-Service sshd -StartupType Automatic; if((Get-Service sshd).Status -ne 'Running'){Start-Service sshd}`)
-		a.RollbackCommand = psCommand(`Stop-Service sshd -ErrorAction SilentlyContinue`)
+		a.Command = psCommand(`$ErrorActionPreference='Stop'; Set-Service sshd -StartupType Automatic; if((Get-Service sshd).Status -ne 'Running'){Start-Service sshd}`)
+		policy := snapshot.SSHService.StartPolicy
+		if strings.EqualFold(policy, "auto") || strings.EqualFold(policy, "automatic") {
+			policy = "Automatic"
+		} else if strings.EqualFold(policy, "disabled") {
+			policy = "Disabled"
+		} else {
+			policy = "Manual"
+		}
+		verb := "Stop-Service"
+		if snapshot.SSHService.Running {
+			verb = "Start-Service"
+		}
+		a.RollbackCommand = psCommand(fmt.Sprintf("$ErrorActionPreference='Stop'; Set-Service sshd -StartupType Manual; %s sshd; Set-Service sshd -StartupType %s", verb, policy))
 	case PlatformMacOS:
 		a.Command = []string{"systemsetup", "-setremotelogin", "on"}
-		a.RollbackCommand = []string{"systemsetup", "-setremotelogin", "off"}
+		a.RollbackCommand = []string{"systemsetup", "-setremotelogin", map[bool]string{true: "on", false: "off"}[snapshot.SSHService.Running]}
 	default:
 		service := serviceName(profile, snapshot)
 		a.Command = []string{"systemctl", "enable", "--now", service}
-		a.RollbackCommand = []string{"systemctl", "disable", "--now", service}
+		startup := "disable"
+		if snapshot.SSHService.StartPolicy == "enabled" {
+			startup = "enable"
+		}
+		state := "stop"
+		if snapshot.SSHService.Running {
+			state = "start"
+		}
+		a.RollbackCommand = unixCommand(fmt.Sprintf("set -eu; systemctl %s %s; systemctl %s %s", startup, shQuote(service), state, shQuote(service)))
 	}
 	return a
 }
 
 func configureFirewallAction(profile Profile, snapshot Snapshot, scopes []string) Action {
+	if snapshot.Platform != PlatformWindows {
+		existing := firewallScopeSet(snapshot.Firewall.Scopes)
+		missing := make([]string, 0, len(scopes))
+		for _, scope := range scopes {
+			if !existing[normalizeFirewallScope(scope)] {
+				missing = append(missing, scope)
+			}
+		}
+		scopes = missing
+	}
 	a := baseAction("configure-firewall", "configure_firewall", "firewall", RiskHigh, fmt.Sprintf("Allow TCP %d from %s only", profile.SSH.Port, strings.Join(scopes, ", ")), "No port-and-scope-aware firewall rule matches the profile.")
 	a.RequiresElevation = true
 	a.Reversible = true
 	name := fmt.Sprintf("SSH-Launchpad-TCP-%d", profile.SSH.Port)
 	switch snapshot.Platform {
 	case PlatformWindows:
-		quotedScopes := "'" + strings.Join(scopes, "','") + "'"
-		conflicts := psStringArray(snapshot.Firewall.ConflictingRules)
-		backupName := fmt.Sprintf("firewall-%d-%s.json", profile.SSH.Port, time.Now().UTC().Format("20060102T150405Z"))
-		a.Command = psCommand(fmt.Sprintf(`$ErrorActionPreference='Stop'; $backup=Join-Path $env:ProgramData 'SSH Launchpad\%s'; $conflicts=%s; $dynamic=Get-NetFirewallPortFilter -Protocol TCP -ErrorAction SilentlyContinue | Where-Object {[string]$_.LocalPort -eq '%d'} | ForEach-Object {Get-NetFirewallRule -AssociatedNetFirewallPortFilter $_ -ErrorAction SilentlyContinue} | Where-Object {$_.Name -ne '%s' -and $_.Enabled -eq 'True' -and $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow'} | Where-Object {$a=Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $_ -ErrorAction SilentlyContinue; @($a.RemoteAddress | Where-Object {$_ -in @('Any','*','0.0.0.0/0','::/0')}).Count -gt 0} | Select-Object -ExpandProperty Name; $conflicts=@($conflicts+$dynamic | Select-Object -Unique); New-Item -ItemType Directory -Path (Split-Path $backup) -Force | Out-Null; ConvertTo-Json -InputObject @($conflicts) | Set-Content -LiteralPath $backup -Encoding UTF8; try{foreach($rule in $conflicts){Get-NetFirewallRule -Name $rule -ErrorAction SilentlyContinue | Set-NetFirewallRule -Enabled False}; Get-NetFirewallRule -Name '%s' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; New-NetFirewallRule -Name '%s' -DisplayName '%s' -Direction Inbound -Action Allow -Enabled True -Profile Any -Protocol TCP -LocalPort %d -RemoteAddress %s | Out-Null}catch{Get-NetFirewallRule -Name '%s' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; foreach($rule in $conflicts){Get-NetFirewallRule -Name $rule -ErrorAction SilentlyContinue | Set-NetFirewallRule -Enabled True}; Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue; throw}`, backupName, conflicts, profile.SSH.Port, name, name, name, name, profile.SSH.Port, quotedScopes, name))
-		a.RollbackCommand = psCommand(fmt.Sprintf(`$backup=Join-Path $env:ProgramData 'SSH Launchpad\%s'; $conflicts=if(Test-Path -LiteralPath $backup){@(Get-Content -LiteralPath $backup -Raw | ConvertFrom-Json)}else{%s}; Get-NetFirewallRule -Name '%s' -ErrorAction SilentlyContinue | Remove-NetFirewallRule; foreach($rule in $conflicts){Get-NetFirewallRule -Name $rule -ErrorAction SilentlyContinue | Set-NetFirewallRule -Enabled True}; Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue`, backupName, conflicts, name))
+		a.Command, a.RollbackCommand = windowsFirewallCommands(name, profile.SSH.Port, scopes, snapshot.Firewall.ConflictingRules)
 	case PlatformMacOS:
 		a.Command = nil
 		a.Risk = RiskMedium
@@ -388,8 +371,8 @@ func configureFirewallAction(profile Profile, snapshot Snapshot, scopes []string
 			for _, command := range remove {
 				rollbackOnFailure = append(rollbackOnFailure, "("+command+") || true")
 			}
-			a.Command = unixCommand("set -eu; if ! { " + strings.Join(add, "; ") + "; }; then " + strings.Join(rollbackOnFailure, "; ") + "; exit 1; fi")
-			a.RollbackCommand = unixCommand("set -eu; " + strings.Join(rollbackOnFailure, "; "))
+			a.Command = unixCommand("set -eu; if ! { " + strings.Join(add, " && ") + "; }; then " + strings.Join(rollbackOnFailure, "; ") + "; exit 1; fi")
+			a.RollbackCommand = unixCommand("set -eu; " + strings.Join(remove, " && "))
 		default:
 			var add, remove []string
 			for _, scope := range scopes {
@@ -401,8 +384,12 @@ func configureFirewallAction(profile Profile, snapshot Snapshot, scopes []string
 			for _, command := range remove {
 				rollbackOnFailure = append(rollbackOnFailure, "("+command+") || true")
 			}
-			a.Command = unixCommand("set -eu; if ! { " + strings.Join(add, "; ") + "; }; then " + strings.Join(rollbackOnFailure, "; ") + "; exit 1; fi")
-			a.RollbackCommand = unixCommand("set -eu; " + strings.Join(rollbackOnFailure, "; "))
+			if len(add) == 0 {
+				add = []string{"true"}
+				remove = []string{"true"}
+			}
+			a.Command = unixCommand("set -eu; if ! { " + strings.Join(add, " && ") + "; }; then " + strings.Join(rollbackOnFailure, "; ") + "; exit 1; fi")
+			a.RollbackCommand = unixCommand("set -eu; " + strings.Join(remove, " && "))
 		}
 	}
 	a.Params = map[string]string{"ruleName": name, "port": strconv.Itoa(profile.SSH.Port), "scopes": strings.Join(scopes, ",")}
@@ -554,20 +541,6 @@ func yesNo(value bool) string {
 	return "no"
 }
 
-func psBool(value bool) string {
-	if value {
-		return "$true"
-	}
-	return "$false"
-}
-
-func shellBool(value bool) string {
-	if value {
-		return "true"
-	}
-	return "false"
-}
-
 func containsInt(values []int, value int) bool {
 	for _, item := range values {
 		if item == value {
@@ -579,7 +552,7 @@ func containsInt(values []int, value int) bool {
 
 func isSelfCutOperation(operation string) bool {
 	switch operation {
-	case "configure_sshd", "enable_sshd", "configure_firewall", "install_tailscale":
+	case "configure_sshd", "enable_sshd", "configure_firewall", "install_tailscale", "install_ssh", "repair_ssh_install", "authenticate_tailscale":
 		return true
 	default:
 		return false

@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -65,6 +64,13 @@ func (SystemProbe) Check(ctx context.Context, profile Profile) (Snapshot, error)
 		s.SSHServer, s.SSHService, s.SSHPort = probeSSHServer(probeCtx, platform, profile)
 		s.SSHConfigValid = probeSSHConfig(probeCtx, platform, s.SSHServer)
 		effective := probeSSHEffectiveConfig(probeCtx, platform, s.SSHServer)
+		s.SSHPorts = effective.Ports
+		if s.SSHServer.Installed && (s.SSHServer.BinaryExists == nil || *s.SSHServer.BinaryExists) {
+			if err := inspectSSHPolicy(sshConfigPath(platform), platform); err != nil {
+				s.SSHPolicyError = err.Error()
+				effective.Checked = false
+			}
+		}
 		if effective.Checked {
 			// sshd -T parsed the complete effective configuration successfully. It
 			// is a sufficient syntax check when an unprivileged probe cannot read
@@ -73,7 +79,7 @@ func (SystemProbe) Check(ctx context.Context, profile Profile) (Snapshot, error)
 			if path, err := resolveEffectiveAuthorizedKeysPath(effective.AuthorizedKeysFile, s); err == nil {
 				s.SSHAuthorizedKeysFileChecked = true
 				s.SSHAuthorizedKeysFile = path
-			} else if platform == PlatformWindows && s.TargetUserIsAdmin && isAdminDefaultAuthorizedKeysPath(effective.AuthorizedKeysFile, s) {
+			} else if platform == PlatformWindows && s.TargetUserIsAdmin && hasStockAdminMatch(sshConfigPath(platform)) && isAdminDefaultAuthorizedKeysPath(effective.AuthorizedKeysFile, s) {
 				// Win32-OpenSSH serves members of the Administrators group from
 				// the machine-wide administrators_authorized_keys file whenever
 				// the effective AuthorizedKeysFile is the default per-user path,
@@ -221,6 +227,7 @@ func configuredSSHPort(ctx context.Context, sshdPath string) int {
 }
 
 type effectiveSSHConfig struct {
+	Ports                        []int
 	Checked                      bool
 	PasswordAuthentication       bool
 	KbdInteractiveAuthentication bool
@@ -270,6 +277,7 @@ func parseEffectiveSSHConfig(out []byte) effectiveSSHConfig {
 	keyboard, hasKeyboard := values["kbdinteractiveauthentication"]
 	pubkey, hasPubkey := values["pubkeyauthentication"]
 	return effectiveSSHConfig{
+		Ports:                        parseConfiguredSSHPorts(out),
 		Checked:                      hasPassword && hasKeyboard && hasPubkey,
 		PasswordAuthentication:       strings.EqualFold(password, "yes"),
 		KbdInteractiveAuthentication: strings.EqualFold(keyboard, "yes"),
@@ -516,7 +524,7 @@ func probeAuthorizedKeys(snapshot Snapshot, profile Profile) (bool, bool, int) {
 func probeFirewall(ctx context.Context, platform Platform, port int) (FirewallState, error) {
 	switch platform {
 	case PlatformWindows:
-		script := fmt.Sprintf(`$target=%d; function Test-Port($spec){foreach($part in @($spec)-split ','){$part=$part.Trim(); if($part -in @('Any','*')){return $true}; if($part -match '^(\d+)-(\d+)$' -and $target -ge [int]$Matches[1] -and $target -le [int]$Matches[2]){return $true}; if($part -match '^\d+$' -and [int]$part -eq $target){return $true}}; return $false}; $r=Get-NetFirewallPortFilter -Protocol TCP -ErrorAction SilentlyContinue | Where-Object {Test-Port $_.LocalPort} | ForEach-Object {$filter=$_; $rule=Get-NetFirewallRule -AssociatedNetFirewallPortFilter $filter -ErrorAction SilentlyContinue | Where-Object {$_.Enabled -eq 'True' -and $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow'}; foreach($item in $rule){$a=Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $item -ErrorAction SilentlyContinue; [pscustomobject]@{port=$target;name=$item.Name;displayName=$item.DisplayName;scope=($a.RemoteAddress -join ',');exactPort=([string]$filter.LocalPort -eq [string]$target)}}}; ConvertTo-Json -InputObject @($r) -Compress`, port)
+		script := fmt.Sprintf(`$ErrorActionPreference='Stop'; $target=%d; function Test-Port($spec){foreach($part in @($spec)-split ','){$part=$part.Trim(); if($part -in @('Any','*')){return $true}; if($part -match '^(\d+)-(\d+)$' -and $target -ge [int]$Matches[1] -and $target -le [int]$Matches[2]){return $true}; if($part -match '^\d+$' -and [int]$part -eq $target){return $true}}; return $false}; $r=Get-NetFirewallPortFilter -PolicyStore ActiveStore -ErrorAction Stop | Where-Object {$_.Protocol -in @('TCP','6','Any','256') -and (Test-Port $_.LocalPort)} | ForEach-Object {$filter=$_; $rule=Get-NetFirewallRule -AssociatedNetFirewallPortFilter $filter -ErrorAction Stop | Where-Object {$_.Enabled -eq 'True' -and $_.Direction -eq 'Inbound' -and $_.Action -eq 'Allow'}; foreach($item in $rule){$a=Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $item -ErrorAction Stop; [pscustomobject]@{port=$target;name=$item.Name;displayName=$item.DisplayName;scope=($a.RemoteAddress -join ',');exactPort=([string]$filter.LocalPort -eq [string]$target)}}}; ConvertTo-Json -InputObject @($r) -Compress`, port)
 		// The inventory sweep enumerates every TCP port filter and its rule
 		// associations; measured at 14.4s on an idle, nearly rule-free Windows
 		// Server VM without elevation, so real consumer machines with many
@@ -534,14 +542,16 @@ func probeFirewall(ctx context.Context, platform Platform, port int) (FirewallSt
 		if len(strings.TrimSpace(string(out))) > 2 && json.Unmarshal(out, &rules) != nil {
 			return FirewallState{Provider: "windows-firewall"}, errors.New("could not parse Windows firewall rule inventory")
 		}
-		profileScript := `if(@(Get-NetFirewallProfile -ErrorAction Stop | Where-Object {-not $_.Enabled}).Count -gt 0){exit 1}`
+		profileScript := `$ErrorActionPreference='Stop'; if(@(Get-NetFirewallProfile -PolicyStore ActiveStore -ErrorAction Stop | Where-Object {-not $_.Enabled -or $_.DefaultInboundAction -eq 'Allow'}).Count -gt 0){exit 1}`
 		if _, err := runCommand(ctx, 8*time.Second, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", profileScript); err != nil {
 			return FirewallState{Provider: "windows-firewall"}, errors.New("one or more Windows Firewall profiles are disabled or unreadable")
 		}
 		state := FirewallState{Checked: true, Enabled: true, Provider: "windows-firewall"}
 		for _, rule := range rules {
 			state.Ports = []int{port}
-			state.Scopes = append(state.Scopes, rule.Scope)
+			for _, scope := range strings.Split(rule.Scope, ",") {
+				state.Scopes = append(state.Scopes, normalizeFirewallScope(scope))
+			}
 			name := rule.Name
 			if name == "" {
 				name = rule.DisplayName
@@ -567,86 +577,8 @@ func probeFirewall(ctx context.Context, platform Platform, port int) (FirewallSt
 	case PlatformMacOS:
 		return FirewallState{Checked: true, Enabled: true, Provider: "application-firewall"}, nil
 	default:
-		if _, err := exec.LookPath("ufw"); err == nil {
-			out, runErr := runCommand(ctx, 8*time.Second, "ufw", "status")
-			if runErr != nil {
-				return FirewallState{Provider: "ufw"}, runErr
-			}
-			state := FirewallState{
-				Checked:  true,
-				Enabled:  strings.Contains(strings.ToLower(string(out)), "status: active"),
-				Provider: "ufw",
-			}
-			linePattern := regexp.MustCompile(`^\s*(\d+)(?:-(\d+))?(?:/tcp)?(?:\s+\(v6\))?\s+ALLOW(?:\s+IN)?\s+(.+?)\s*$`)
-			for _, line := range strings.Split(string(out), "\n") {
-				match := linePattern.FindStringSubmatch(line)
-				if len(match) != 4 || !portSpecIncludes(match[1], match[2], port) {
-					continue
-				}
-				scope := strings.TrimSpace(match[3])
-				state.Ports = []int{port}
-				state.Scopes = append(state.Scopes, scope)
-				if match[2] != "" {
-					state.PortRangeRules = append(state.PortRangeRules, strings.TrimSpace(line))
-				}
-				if broadFirewallScope(scope) || strings.EqualFold(scope, "Anywhere") || strings.HasPrefix(strings.ToLower(scope), "anywhere ") {
-					state.BroadExposure = true
-				}
-			}
-			return state, nil
-		}
-		if _, err := exec.LookPath("firewall-cmd"); err == nil {
-			out, runErr := runCommand(ctx, 8*time.Second, "firewall-cmd", "--list-rich-rules")
-			if runErr != nil {
-				return FirewallState{Provider: "firewall-cmd"}, runErr
-			}
-			state := FirewallState{Checked: true, Enabled: true, Provider: "firewall-cmd"}
-			portsOut, _ := runCommand(ctx, 8*time.Second, "firewall-cmd", "--list-ports")
-			for _, declared := range strings.Fields(string(portsOut)) {
-				portPart, ok := strings.CutSuffix(declared, "/tcp")
-				if !ok {
-					continue
-				}
-				start, end, exact, ok := parsePortSpec(portPart)
-				if !ok || port < start || port > end {
-					continue
-				}
-				state.Ports = []int{port}
-				state.Scopes = append(state.Scopes, "")
-				if !exact {
-					state.PortRangeRules = append(state.PortRangeRules, declared)
-				} else {
-					state.BroadExposure = true
-				}
-			}
-			portPattern := regexp.MustCompile(`port port="([^"]+)" protocol="tcp"`)
-			sourcePattern := regexp.MustCompile(`source address="([^"]+)"`)
-			for _, line := range strings.Split(string(out), "\n") {
-				match := portPattern.FindStringSubmatch(line)
-				if len(match) != 2 {
-					continue
-				}
-				start, end, exact, ok := parsePortSpec(match[1])
-				if !ok || port < start || port > end {
-					continue
-				}
-				scope := ""
-				if sourceMatch := sourcePattern.FindStringSubmatch(line); len(sourceMatch) == 2 {
-					scope = sourceMatch[1]
-				}
-				state.Ports = []int{port}
-				state.Scopes = append(state.Scopes, scope)
-				if !exact {
-					state.PortRangeRules = append(state.PortRangeRules, strings.TrimSpace(line))
-				}
-				if broadFirewallScope(scope) {
-					state.BroadExposure = true
-				}
-			}
-			return state, nil
-		}
+		return probeUnixFirewall(ctx, port)
 	}
-	return FirewallState{}, errors.New("no supported firewall provider was detected")
 }
 
 func portSpecIncludes(startText, endText string, target int) bool {

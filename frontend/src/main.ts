@@ -40,6 +40,7 @@ const state: {
     note: string;
   };
   report?: Report;
+  mutationReport?: Report;
   planReport?: Report;
   planError: string;
   verifyReport?: Report;
@@ -242,13 +243,25 @@ function bindGlobalEvents(): void {
   document.querySelector<HTMLInputElement>("#key-file")?.addEventListener("change", importKeyFromBrowser);
 }
 
+let renderedLocation = "";
 function renderPage(): void {
+  const location = `${state.view}:${state.step}`;
+  const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement.id : "";
   const view = document.querySelector<HTMLElement>("#view")!;
   animateFromCurrent(view);
   if (state.view === "home") view.innerHTML = renderHome(state, t);
   if (state.view === "wizard") view.innerHTML = renderWizard(state, t);
   if (state.view === "advanced") view.innerHTML = renderAdvanced(state, t);
   bindPageEvents();
+  const heading = view.querySelector<HTMLElement>("h1");
+  heading?.setAttribute("tabindex", "-1");
+  heading?.setAttribute("id", "view-heading");
+  if (location !== renderedLocation) {
+    if (renderedLocation) heading?.focus({ preventScroll: true });
+    renderedLocation = location;
+  } else if (previousFocus) {
+    document.getElementById(previousFocus)?.focus({ preventScroll: true });
+  }
 }
 
 function bindPageEvents(): void {
@@ -295,7 +308,9 @@ function bindPageEvents(): void {
   });
   document.querySelector("#test-now")?.addEventListener("click", () => void runVerify());
   document.querySelector("#verify-again")?.addEventListener("click", () => void runVerify());
-  document.querySelector("#copy-command")?.addEventListener("click", copyConnectionCommand);
+  document.querySelector("#copy-command")?.addEventListener("click", () => void copyConnectionCommand());
+  document.querySelector("#copy-handoff")?.addEventListener("click", () => void copyConnectionCommand(true));
+  document.querySelector("#review-remaining")?.addEventListener("click", () => { state.step = 1; state.installState = "idle"; void runPlanStage(); });
   document.querySelector("#finish")?.addEventListener("click", goHome);
   document.querySelector("#import-profile")?.addEventListener("click", () => void importProfile());
   document.querySelector("#export-profile")?.addEventListener("click", () => void exportProfile());
@@ -476,7 +491,7 @@ async function beginSafeInstall(): Promise<void> {
   const plan = state.planReport?.plan;
   const request: DesktopRequest = {
     stage: "apply",
-    profile: state.profile,
+    profile: structuredClone(state.profile),
     planDigest: plan?.digest ?? "",
     confirmed: true,
     allowSelfCut: false,
@@ -488,7 +503,11 @@ async function beginSafeInstall(): Promise<void> {
   try {
     if (window.go?.main?.App) {
       state.activeJob = await window.go.main.App.BeginElevatedApply(request);
-      await pollElevatedJob(state.activeJob.id);
+      if (["completed", "failed", "cancelled"].includes(state.activeJob.state)) {
+        finishElevatedJob(state.activeJob);
+      } else {
+        await pollElevatedJob(state.activeJob.id);
+      }
     } else {
       state.activeJob = await mockElevatedApply(request);
       finishElevatedJob(state.activeJob);
@@ -504,13 +523,20 @@ async function pollElevatedJob(id: string): Promise<void> {
   const deadline = Date.now() + 30 * 60 * 1000;
   let renderedFingerprint = "";
   while (true) {
-    if (Date.now() > deadline) {
-      state.installState = "failed";
+    if (Date.now() > deadline && !state.installError) {
+      // A UI deadline is not a process cancellation. Keep the job attached
+      // and block conflicting navigation until the helper reports terminal.
       state.installError = t("installTimeout");
-      renderPage();
-      return;
+      showToast(state.installError);
     }
-    const job = await window.go!.main!.App!.ElevatedApplyStatus(id);
+    let job: ElevatedJob;
+    try {
+      job = await window.go!.main!.App!.ElevatedApplyStatus(id);
+    } catch {
+      state.installError = t("installTimeout");
+      await delay(2000);
+      continue;
+    }
     state.activeJob = job;
     state.progress = job.events ?? [];
     state.installState = job.state === "waiting-for-permission" ? "waiting-for-permission" : job.state === "running" ? "running" : job.state;
@@ -529,6 +555,10 @@ async function pollElevatedJob(id: string): Promise<void> {
 }
 
 function finishElevatedJob(job: ElevatedJob): void {
+  if (job.report) {
+    state.report = job.report;
+    if (job.report.journalPath) state.mutationReport = job.report;
+  }
   if (job.state === "cancelled") {
     state.installState = "cancelled";
     state.installError = "";
@@ -853,15 +883,24 @@ async function checkForUpdate(): Promise<void> {
 }
 
 async function rollbackLast(): Promise<void> {
-  if (!state.report?.journalPath || !window.go?.main?.App) return;
+  if (state.busy || !state.mutationReport?.journalPath || !window.go?.main?.App) return;
   if (!(await confirmDialog(t("rollbackLast"), t("rollbackConfirmBody")))) return;
+  state.busy = true;
+  renderPage();
   try {
-    const report = await window.go.main.App.Rollback(state.report.journalPath);
+    const report = await window.go.main.App.Rollback(state.mutationReport.journalPath);
     state.report = report;
-    showToast(report.success ? t("verdictReady") : t("errorGeneric"));
-    renderPage();
+    state.mutationReport = report;
+    if (report.success) state.planReport = undefined;
+    state.installState = report.success ? "idle" : "failed";
+    state.installError = report.success ? "" : (report.error || t("recoveryFailed"));
+    if (state.view === "wizard") state.step = report.success ? 0 : 1;
+    showToast(report.success ? t("recoverySucceeded") : (report.error || t("recoveryFailed")));
   } catch (error) {
     showToast(friendlyError(error));
+  } finally {
+    state.busy = false;
+    renderPage();
   }
 }
 
@@ -920,8 +959,12 @@ function importKeyFromBrowser(event: Event): void {
   });
 }
 
-async function copyConnectionCommand(): Promise<void> {
-  const code = document.querySelector<HTMLElement>(".command-box code")?.textContent ?? "";
+async function copyConnectionCommand(handoff = false): Promise<void> {
+  const command = document.querySelector<HTMLElement>(".command-box code")?.textContent ?? "";
+  const snapshot = state.verifyReport?.snapshot;
+  const code = handoff
+    ? [`SSH Launchpad`, `${t("factHost")}: ${snapshot?.hostname ?? "—"}`, command, t("localVerifyOnly"), t("firstConnect2")].join("\n")
+    : command;
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(code);
@@ -943,7 +986,7 @@ async function copyConnectionCommand(): Promise<void> {
 }
 
 function goHome(): void {
-  if (state.installState === "waiting-for-permission" || state.installState === "running") {
+  if (state.busy || state.installState === "waiting-for-permission" || state.installState === "running") {
     showToast(t("installingBody"));
     return;
   }

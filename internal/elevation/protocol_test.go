@@ -81,6 +81,49 @@ func TestElevationRequestRequiresReviewedPlanDigest(t *testing.T) {
 	}
 }
 
+func TestRollbackRequestBindsJournalAndDoesNotRequireApplyProfile(t *testing.T) {
+	directory := t.TempDir()
+	responsePath := filepath.Join(directory, "response.json")
+	eventsPath := filepath.Join(directory, "events.jsonl")
+	journalPath := filepath.Join(directory, "apply.journal.json")
+	journal := []byte(`{"schemaVersion":1}`)
+	if err := os.WriteFile(journalPath, journal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := launchpad.FileSHA256(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{responsePath, eventsPath} {
+		if err := PrecreateFile(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	request := NewRollbackRequest(journalPath, sum, responsePath, eventsPath)
+	requestPath := filepath.Join(directory, "request.json")
+	digest, err := WriteRequest(requestPath, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ConsumeRequest(requestPath, digest); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(journalPath, []byte(`{"schemaVersion":1,"changed":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	requestPath = filepath.Join(directory, "request-2.json")
+	digest, err = WriteRequest(requestPath, NewRollbackRequest(journalPath, sum, responsePath, eventsPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyRequest(requestPath, digest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (launchpad.Executor{}).RollbackVerified(t.Context(), journalPath, sum); err == nil {
+		t.Fatal("changed journal accepted by verified recovery")
+	}
+}
+
 func TestWriteRequestRefusesExistingPath(t *testing.T) {
 	directory := t.TempDir()
 	responsePath := filepath.Join(directory, "response.json")

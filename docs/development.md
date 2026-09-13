@@ -4,7 +4,8 @@ Requirements: Go 1.25+, Node 22+, pnpm 10+, Wails 2.13, and NSIS for a
 Windows installer.
 
 ```text
-go test ./...
+go test -p 1 ./...
+go test -p 1 -race ./...
 go vet ./...
 # On Unix, generated command tests also run sh -n and ShellCheck.
 cd frontend
@@ -23,8 +24,15 @@ are applied:
 pwsh -NoProfile -File scripts/build-windows-installer.ps1 -Version 0.2.6
 ```
 
+Serialize Go test packages with `-p 1`: separate test binaries exercise the
+same system-wide mutation lock. Package-local race detection and intentional
+lock-contention tests remain enabled. Do not run another mutation test suite
+or a real Apply concurrently.
+
 Never run tests that change SSH, Tailscale, RDP, or firewall state on a real
-host; cover those paths with mocks and generated-command tests.
+host; cover those paths with mocks, command parsers, and generated-command
+tests. When touching recovery, also exercise failure before, during, and after
+the first mutation plus cancellation and repeated Rollback.
 
 Local full-package assembly is provided by `scripts/package-release.ps1`; the
 release workflow performs the equivalent isolated packaging jobs in CI and

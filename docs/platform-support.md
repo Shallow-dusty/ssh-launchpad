@@ -18,25 +18,38 @@ A non-UTF-8 locale falls back to English/ASCII. Non-TTY/CI execution never waits
 for prompts or emits animation/color; `NO_COLOR` is honored because the CLI
 does not require ANSI color.
 
+The table's evidence column records the original v0.2.0 baseline, not a new
+execution of every CI/native test. Current candidate evidence is in
+[the September audit](audit-2026-09.md).
+
 ## Current native boundary
 
 - Real Apply was not run on the development workstation or a personal remote
   host.
 - Windows UAC request integrity, cancellation, progress return, and mock Apply
-  are tested. A minimum disposable-VM Apply/Verify/Rollback smoke is a v0.2.3
-  release gate; the expanded servicing and interruption matrix remains v0.3.
+  are tested with mocks. Disposable-VM Apply/Verify/Rollback and installer
+  upgrade smoke remain outstanding candidate acceptance gates; no version label
+  by itself proves these passed.
 - Linux/macOS adapters are exercised by native CI and generated-command tests,
-  not by changing a production host.
-- On Linux/macOS, `ufw status` and `firewall-cmd --list-rich-rules` may return a
-  partial rule set in a non-root session. When SSH Launchpad cannot confirm the
-  requested port-and-scope rule, it records the state as a plan blocker rather
-  than assuming the host is already secured; re-run Check as root or provide an
-  explicit `exposure.mode: custom` CIDR set when the local account cannot read
-  the full firewall state.
-- SSH authentication is probed with a single `sshd -T` dump of the global
-  effective configuration. Per-connection `Match` blocks (`sshd -T -C ...`)
-  are not evaluated; hosts whose authentication policy depends on `Match`
-  criteria are treated as unchecked, which fails closed as a plan blocker.
+  not by changing a production host. Native CI is configured; its latest remote
+  run was not checked as part of local verification.
+- UFW/firewalld evidence is deliberately narrow: UFW requires a readable
+  verbose inventory with a deny/reject incoming default and only fully
+  understood inbound rules; firewalld requires one active default zone, no
+  service/policy/direct/source-port/forwarding entries, no runtime/persistent
+  drift, and only exact source/port `accept` rich rules. Anything else is a
+  plan blocker rather than an inferred safe state **when visible in those
+  supported inventories**. UFW before/after raw rules and independent
+  nftables/iptables rules are not read by the current adapter; such customized
+  hosts require external inventory and are not fully validated targets.
+- SSH authentication is probed with the global `sshd -T` dump plus a
+  conservative source-policy inspection. Unsupported `Match` blocks, custom
+  `ListenAddress`, a `Port` inside an included file, recursive includes, or
+  other connection-dependent policy are treated as unchecked and fail closed
+  as plan blockers. The stock Win32-OpenSSH `Match Group administrators` /
+  `administrators_authorized_keys` redirection is the only modeled exception.
+  Extra effective SSH ports also force configuration review instead of being
+  mistaken for convergence on the requested port.
 - Windows artifacts are unsigned. macOS artifacts are not signed/notarized and
   may require the user to approve the downloaded file in system settings.
 - Linux desktop entry launch depends on the file manager honoring `Terminal=true`

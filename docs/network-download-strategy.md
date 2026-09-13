@@ -11,7 +11,13 @@
 
 Tailscale installation follows the same principle: use a trusted system package
 repository or a deliberately supplied offline installer. SSH Launchpad does not
-pipe network content into a shell.
+pipe network content into a shell. Mirror/proxy/cache selection for downloading
+SSH Launchpad itself belongs to the bootstrap scripts' command-line options;
+they do not consume a profile's `download` fields. Those profile fields are
+reserved for dependency adapters. Currently these adapters support only the
+configured system package manager and, on Windows Tailscale, a pinned offline
+installer. Unsupported combinations fail in Plan instead of silently falling
+back to the network.
 
 ## Integrity and availability
 
@@ -23,8 +29,9 @@ pipe network content into a shell.
   HTTP range resume, and cache reuse only after validation.
 - The bootstrap scripts retry and cache release assets. A hash mismatch aborts
   and leaves the artifact available for diagnosis.
-- Proxy and mirror settings are explicit profile or command inputs; environment
-  defaults are reported but not turned into trust.
+- Bootstrap proxy and mirror settings are explicit command inputs; environment
+  defaults are reported but not turned into trust. Profile settings are not
+  implicitly forwarded to package managers.
 - TLS certificate verification is never disabled.
 
 Checksums prove that an asset matches the published manifest; they do not

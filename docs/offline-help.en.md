@@ -13,14 +13,22 @@ Windows desktop users should choose the installer, open it, and follow the guide
 
 ## No network
 
-Retry later, configure an explicit proxy or HTTPS mirror, or use an offline asset next to its `checksums.txt`. A download that fails verification is never executed. Do not disable TLS or security software to bypass an error.
+The tool runs offline. Bootstrap command options can select an explicit proxy or HTTPS mirror, or use an offline release asset next to its `checksums.txt`. Profile download fields are not implicitly forwarded to dependency package managers.
+
+Only the Windows Tailscale adapter currently accepts a SHA-256-pinned `offlineBundle`. Install offline OpenSSH separately through trusted platform servicing, then Check/Plan again. Unsupported combinations are blocked. Never disable TLS or security software to bypass verification.
 
 ## Permission, cancellation, and recovery
 
-Start as a normal user. UAC/sudo is requested only for installation. Cancelling permission stops further work. After partial failure, later steps stop and reversible work is restored from the execution record; advanced mode can export the report or restore the last run.
+Start the Windows GUI as a normal user; system changes/recovery request UAC when needed. Follow the Unix CLI's administrator guidance separately. Cancelling permission stops further work.
+
+After partial failure, later steps stop and enabled auto-rollback attempts reversible recovery. The failed-Apply page and advanced settings offer report export and Recover reversible changes. Installed packages/logins may remain. Inspect recovery results before retrying; keep the window open while an operation is still active.
 
 ## Remote-session safety
 
 If the only connection depends on SSH or Tailscale, SSH Launchpad blocks actions that could disconnect itself. Run locally on the target, prepare a second channel, or complete external verification from another computer.
+
+`--schedule-risky` is an in-process delay retaining the mutation lock, not a detached task; keep the process running. Legacy scheduled journals require manual task verification. Custom UFW raw rules are not completely inventoried automatically.
+
+A successful finish means local checks passed. Still test public-key authentication from the controller and compare the host fingerprint.
 
 This version is not code-signed. When the operating system warns, verify the Release SHA-256 first; disabling SmartScreen or security software is not recommended.

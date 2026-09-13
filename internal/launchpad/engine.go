@@ -60,6 +60,11 @@ func (e *Engine) Plan(ctx context.Context, profile Profile) (Report, error) {
 }
 
 func (e *Engine) Apply(ctx context.Context, profile Profile, opts ApplyOptions) (Report, error) {
+	ctx, release, lockErr := mutationContext(ctx)
+	if lockErr != nil {
+		return failedApplyReport(profile.Name, nil, ExitConfirmationRequired, lockErr.Error())
+	}
+	defer release()
 	planReport, err := e.Plan(ctx, profile)
 	if err != nil {
 		return planReport, err

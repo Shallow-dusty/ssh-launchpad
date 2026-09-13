@@ -4,6 +4,44 @@ All notable changes are documented here.
 
 ## [0.2.6] - 2026-09-05
 
+### Wizard design and interaction (2026-09-13)
+
+- Keep the existing three-step architecture, with a clearer home flow preview,
+  current-step trail, keyboard focus retention and dark/narrow-screen refinements.
+- Replace timed fake probe completion with honest pending indicators; label
+  irreversible actions and expose journal recovery/report export on failures.
+- Incomplete verification returns to a fresh review; successful local checks
+  offer key-free connection details and explicitly require a controller test.
+- Browser tests build fresh assets automatically; 23 scenarios now pass.
+
+### Security and recovery hardening (2026-09-12)
+
+- Fail closed on unsupported SSH `Match`, custom `ListenAddress`, included
+  `Port`, recursive `Include`, and extra effective ports; changing the port
+  removes prior top-level `Port` directives and Verify checks every port.
+- Make firewall evidence fail closed for partial/unsupported inventories:
+  Windows Any-protocol allows and default inbound policy, UFW application
+  profiles and unreadable rules, firewalld services/zones/direct rules,
+  runtime drift, and non-accept rich rules.
+- Propagate every firewall command failure, restore only plan-owned Unix
+  scopes, preserve Windows managed-rule attributes, and restore prior service
+  startup/running state and authorized_keys ACLs/ownership.
+- Persist in-flight action intent before the first possible side effect;
+  recover failed/interrupted reversible actions, fail closed on legacy
+  uncertain journals, use a bounded cancellation-independent recovery context,
+  and share one mutation lock across GUI, CLI, and elevated helpers.
+- Replace detached risky scheduling with a cancellable in-process delay that
+  retains the mutation lock; actual completion is required. Legacy detached
+  jobs need manual verification before recovery. Self-cut overrides also
+  require an external verification endpoint.
+- Keep failed GUI Apply reports and journals available, add digest-bound
+  elevated Rollback, and treat the GUI status deadline as continued tracking
+  rather than process cancellation.
+- Phase SSH package repair before authentication/firewall changes and reject
+  unsupported dependency download strategies instead of silently going online.
+- Align release defaults, package metadata, and tag-matched notes through a
+  pre-packaging gate.
+
 ### Fixed
 
 - Windows firewall scope comparison now normalizes netmask-form scopes

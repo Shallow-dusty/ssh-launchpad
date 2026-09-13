@@ -180,12 +180,14 @@ func (a *App) BeginElevatedApply(request DesktopRequest) (ElevatedJob, error) {
 			a.DismissElevatedJob(id)
 			return ElevatedJob{}, err
 		}
+		initial := record.status
 		go a.runUACJob(record, executable, requestPath, digest)
-		return record.status, nil
+		return initial, nil
 	}
 
+	initial := record.status
 	go a.runDirectJob(record, request)
-	return record.status, nil
+	return initial, nil
 }
 
 func (a *App) ElevatedApplyStatus(id string) (ElevatedJob, error) {
@@ -287,7 +289,16 @@ func desktopApplyOptions(request DesktopRequest) launchpad.ApplyOptions {
 }
 
 func (a *App) Rollback(journalPath string) (launchpad.Report, error) {
-	return a.engine.Executor.Rollback(a.ctx, journalPath)
+	if runtime.GOOS == "windows" && !launchpad.CurrentProcessElevated(a.ctx) {
+		return a.elevatedRollback(journalPath)
+	}
+	report, err := a.engine.Executor.Rollback(a.ctx, journalPath)
+	// Wails rejects promises when error != nil, discarding useful partial
+	// recovery evidence. Expected execution failures belong in the report.
+	if err != nil && report.Error == "" {
+		report.Error = err.Error()
+	}
+	return report, nil
 }
 
 func (a *App) ExportReport(report launchpad.Report) (string, error) {
@@ -308,7 +319,7 @@ func (a *App) ExportReport(report launchpad.Report) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
-	return path, os.WriteFile(path, append(data, '\n'), 0o600)
+	return path, writePrivateFile(path, append(data, '\n'))
 }
 
 func (a *App) ImportProfile() (launchpad.Profile, error) {
@@ -342,7 +353,7 @@ func (a *App) ExportProfile(profile launchpad.Profile) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return path, os.WriteFile(path, data, 0o600)
+	return path, writePrivateFile(path, data)
 }
 
 // marshalExportProfile strips secrets before a profile leaves the app: a
@@ -385,7 +396,7 @@ func (a *App) ExportPersonalCard(card launchpad.PersonalCard) (string, error) {
 	if !strings.HasSuffix(strings.ToLower(path), ".sshlaunchpad-card") {
 		path += ".sshlaunchpad-card"
 	}
-	return path, os.WriteFile(path, data, 0o600)
+	return path, writePrivateFile(path, data)
 }
 
 func safeCardFilename(value string) string {
@@ -527,6 +538,33 @@ func (a *App) ExportPairingFile(publicKey string) (string, error) {
 		return "", err
 	}
 	return path, os.WriteFile(path, []byte(publicKey+"\n"), 0o644)
+}
+
+func writePrivateFile(path string, data []byte) error {
+	// Stage privately before replacement: never truncate or follow an existing
+	// broad-permission export, and leave its original contents on failure.
+	file, err := os.CreateTemp(filepath.Dir(path), ".ssh-launchpad-export-*")
+	if err != nil {
+		return err
+	}
+	tmp := file.Name()
+	defer os.Remove(tmp)
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func errorText(err error) string {

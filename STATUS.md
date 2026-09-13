@@ -1,10 +1,52 @@
 # Status
 
-Last locally verified: 2026-09-05
+Last locally verified: 2026-09-13
 
 Current release: [`v0.2.6`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.6) (candidate; release CI pending)
 
 ## v0.2.6 (2026-09-05, from OneClick field lessons)
+
+Security and recovery hardening after the 2026-09-12 full audit:
+
+- SSH policy checks fail closed on unsupported `Match`, custom `ListenAddress`,
+  included `Port`, recursive `Include`, and extra effective SSH ports; port
+  changes remove prior top-level `Port` directives instead of leaving the old
+  listener configured.
+- Windows/UFW/firewalld reject unsupported evidence in their supported
+  inventories: Any-protocol Windows rules, UFW application
+  profiles, firewalld services/zones/direct rules, runtime drift, and
+  non-accept rules are no longer guessed as safe allow rules. UFW custom raw
+  rules outside `status verbose` remain an explicit coverage gap; see
+  `docs/audit-2026-09.md`.
+- Firewall mutations propagate every command failure. Unix rollback removes
+  only scopes introduced by the reviewed plan; Windows rollback restores prior
+  managed-rule scopes and conflicting-rule enabled state.
+- Apply journals in-flight intent before the first possible side effect.
+  Failed/interrupted reversible actions are recoverable, legacy uncertain
+  journals fail closed for manual review, automatic recovery uses a bounded
+  context independent of Apply cancellation, and all entry points share a
+  system mutation lock.
+- Service and authorized_keys rollback restores prior running/startup state,
+  file contents, ownership, and Windows ACLs. Missing Windows sshd.exe repair
+  is a deliberate first phase followed by a fresh Check/Plan.
+- The GUI retains failed Apply reports for recovery, supports digest-bound
+  elevated Rollback on Windows, keeps tracking an over-deadline helper instead
+  of declaring it cancelled, and blocks navigation during busy mutations.
+- Release defaults and candidate notes are aligned through a pre-packaging
+  metadata gate.
+- Risky delays retain the mutation lock and are cancellable; no detached
+  mutation is left behind. Old scheduled journals require manual recovery.
+- UI refinement retains the existing three-step framework: explicit flow,
+  recovery actions on failures, fresh review for incomplete verification,
+  shareable connection details and a clear local-check boundary. See
+  `docs/ui-refinement-2026-09.md` for reference and viewport evidence.
+- Final local checks: serialized Go package tests with race detection, vet,
+  staticcheck, govulncheck, ShellCheck, frontend typecheck/build, and 23 browser
+  scenarios passed. Windows launchpad tests (including generated PowerShell
+  syntax) also passed natively through WSL interop. Windows amd64 and macOS
+  arm64 builds passed; this is not live system-change acceptance.
+
+Earlier v0.2.6 fixes:
 
 - Windows firewall scope comparison normalizes netmask-form scopes
   (`100.64.0.0/255.192.0.0` → `100.64.0.0/10`); before this, a correctly
@@ -69,15 +111,17 @@ Current release: [`v0.2.6`](https://github.com/Shallow-dusty/ssh-launchpad/relea
   self-cut protection, process locks, rollback journals, and external
   verification guidance.
 - Standalone portable bundles, bootstraps, offline help, and dependency-pack
-  builders. The tool itself runs offline; installing a missing OpenSSH or
-  Tailscale package fully offline requires a user-supplied, checksummed payload.
+  builders. The tool itself runs offline; the Windows Tailscale adapter accepts
+  a user-supplied, checksummed installer. Offline OpenSSH installation must be
+  performed separately with trusted platform servicing tools.
 
 ## Validation boundary
 
 - No SSH, Tailscale, RDP, or firewall Apply was run against the development
   workstation or any remote host. Linux and macOS system-changing behavior is
-  validated through generated-command tests and native CI runners rather than
-  a real target.
+  locally validated through generated-command tests and temporary-file
+  recovery fixtures, not real service changes. Native CI and isolated target
+  acceptance remain release gates.
 - The Windows installer is not code-signed, and macOS artifacts are not
   notarized.
 - What was verified for each release is recorded in `CHANGELOG.md`.

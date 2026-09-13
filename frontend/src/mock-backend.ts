@@ -3,8 +3,9 @@ import type { DesktopRequest, PlanAction, PublicKeyInfo, Report, Snapshot } from
 
 export async function mockRun(request: DesktopRequest): Promise<Report> {
   await delay(180);
-  const configured = localStorage.getItem("ssh-launchpad-demo-ready") === "true";
   const mode = new URLSearchParams(location.search).get("mock");
+  const configured = localStorage.getItem("ssh-launchpad-demo-ready") === "true"
+    && !(mode === "verify-pending" && request.stage === "verify");
   const unsafeFirewall = mode === "unsafe-firewall";
   const tailnetOffline = mode === "tailnet-offline" && request.profile.transport.mode === "tailnet";
   const snapshot: Snapshot = {

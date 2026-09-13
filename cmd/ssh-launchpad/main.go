@@ -37,9 +37,13 @@ type globalOptions struct {
 var currentLanguage = langEN
 
 func main() {
+	os.Exit(runWithTerminal(os.Args[1:]))
+}
+
+func runWithTerminal(args []string) int {
 	restore := configureTerminal()
 	defer restore()
-	os.Exit(run(os.Args[1:]))
+	return run(args)
 }
 
 func run(args []string) int {
@@ -456,7 +460,13 @@ func runElevatedApply(args []string) int {
 	if currentLanguage == langAuto {
 		currentLanguage = langEN
 	}
-	report, runErr := executeStage(launchpad.StageApply, request.Profile, request.Options, false)
+	var report launchpad.Report
+	var runErr error
+	if request.Operation == launchpad.StageRollback {
+		report, runErr = (launchpad.Executor{}).RollbackVerified(context.Background(), request.JournalPath, request.JournalDigest)
+	} else {
+		report, runErr = executeStage(launchpad.StageApply, request.Profile, request.Options, false)
+	}
 	response := elevationprotocol.Response{Report: report}
 	if runErr != nil {
 		response.Error = runErr.Error()

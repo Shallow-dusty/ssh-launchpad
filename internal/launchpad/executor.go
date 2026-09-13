@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -15,11 +13,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf16"
 )
 
 type CommandRunner interface {
@@ -43,6 +39,7 @@ type Executor struct {
 	Runner             CommandRunner
 	Sink               EventSink
 	AdministratorCheck func(context.Context, Platform) bool
+	Delay              func(context.Context, time.Duration) error
 }
 
 func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts ApplyOptions) (Report, error) {
@@ -81,14 +78,14 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 		report.Finished = time.Now().UTC()
 		return report, errors.New(report.Error)
 	}
-	if plan.SelfCutDetected && opts.ScheduleRisky {
+	if plan.SelfCutDetected {
 		if err := preflightExternalVerify(opts.ExternalVerify); err != nil {
 			report.ExitCode = ExitSelfCutBlocked
-			report.Error = "Scheduled self-cut-sensitive work requires a reachable independent --external-verify-target: " + err.Error()
+			report.Error = "Self-cut-sensitive work requires a reachable independent --external-verify-target: " + err.Error()
 			report.Finished = time.Now().UTC()
 			return report, errors.New(report.Error)
 		}
-		report.Warnings = append(report.Warnings, "An independent verification endpoint was reachable before scheduling: "+opts.ExternalVerify+". Re-check it from the controller after the delayed action.")
+		report.Warnings = append(report.Warnings, "The supplied verification endpoint was TCP-reachable before Apply: "+opts.ExternalVerify+". This does not prove channel independence; confirm recovery access and re-check from the controller after the action.")
 	}
 	adminCheck := e.AdministratorCheck
 	if adminCheck == nil {
@@ -100,6 +97,11 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 		report.Finished = time.Now().UTC()
 		return report, errors.New(report.Error)
 	}
+	ctx, release, lockErr := mutationContext(ctx)
+	if lockErr != nil {
+		return finishReportError(report, ExitConfirmationRequired, lockErr)
+	}
+	defer release()
 	journalDir := opts.JournalDir
 	if journalDir == "" {
 		journalDir = stateDir(profile)
@@ -107,7 +109,7 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 	if err := os.MkdirAll(journalDir, 0o700); err != nil {
 		return finishReportError(report, ExitPartialFailure, fmt.Errorf("create journal directory: %w", err))
 	}
-	journal := Journal{SchemaVersion: SchemaVersion, ID: report.ID, Created: started, ProfileName: profile.Name, Status: "running", Actions: plan.Actions}
+	journal := Journal{SchemaVersion: SchemaVersion, ID: report.ID, Created: started, ProfileName: profile.Name, Status: "running", WriteAhead: true, Actions: plan.Actions}
 	journalPath := filepath.Join(journalDir, report.ID+".journal.json")
 	report.JournalPath = journalPath
 	if err := writeJournalAtomic(journalPath, &journal); err != nil {
@@ -123,7 +125,7 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 		e.emit(StageApply, action.ID, "started", action.Summary, &report)
 		materializedCommand, err := materializeActionCommand(action, profile, plan.Platform)
 		if err != nil {
-			result.Status = "failed"
+			result.Status = "not-started"
 			result.Error = err.Error()
 			result.Finished = time.Now().UTC()
 			report.Results = append(report.Results, result)
@@ -131,29 +133,38 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 		}
 		command, cleanupArtifact, err := stageVerifiedActionArtifact(action, materializedCommand, journalDir, report.ID)
 		if err != nil {
-			result.Status = "failed"
+			result.Status = "not-started"
 			result.Error = err.Error()
 			result.Finished = time.Now().UTC()
 			report.Results = append(report.Results, result)
 			return e.failAndRollback(ctx, profile, report, journal, journalPath, completed, opts, err)
 		}
-		scheduled := action.SelfCutRisk && opts.ScheduleRisky
-		if scheduled {
-			command, err = scheduledCommand(command, profile.Safety.ScheduledDelaySecond, action.ID)
+		if action.SelfCutRisk && opts.ScheduleRisky {
+			delay := e.Delay
+			if delay == nil {
+				delay = waitRiskDelay
+			}
+			e.emit(StageApply, action.ID, "waiting", "Waiting before the risky action while retaining the mutation lock; cancellation prevents this action.", &report)
+			err = delay(ctx, time.Duration(profile.Safety.ScheduledDelaySecond)*time.Second)
 			if err != nil {
 				cleanupArtifact()
-				result.Status = "failed"
+				result.Status = "not-started"
 				result.Error = err.Error()
 				result.Finished = time.Now().UTC()
 				report.Results = append(report.Results, result)
 				return e.failAndRollback(ctx, profile, report, journal, journalPath, completed, opts, err)
 			}
 		}
+		// Persist the in-flight action before its first possible side effect.
+		journal.Results = append(append([]ActionResult(nil), report.Results...), result)
+		if err := writeJournalAtomic(journalPath, &journal); err != nil {
+			cleanupArtifact()
+			return e.failAndRollback(ctx, profile, report, journal, journalPath, completed, opts, err)
+		}
+		completed = append(completed, action) // includes partially executed actions
 		var buffer safeBuffer
 		err = runner.Run(ctx, command, &buffer)
-		if !scheduled || err != nil {
-			cleanupArtifact()
-		}
+		cleanupArtifact()
 		result.Output = buffer.String()
 		if action.Operation == "authenticate_tailscale" {
 			result.Output = redactCredentialText(result.Output, profile.Transport.AuthKey)
@@ -170,9 +181,8 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 			e.emit(StageApply, action.ID, "error", executionError, &report)
 			return e.failAndRollback(ctx, profile, report, journal, journalPath, completed, opts, errors.New(executionError))
 		}
-		result.Status = map[bool]string{true: "scheduled", false: "completed"}[action.SelfCutRisk && opts.ScheduleRisky]
+		result.Status = "completed"
 		report.Results = append(report.Results, result)
-		completed = append(completed, action)
 		e.emit(StageApply, action.ID, "completed", result.Status, &report)
 		journal.Results = report.Results
 		if err := writeJournalAtomic(journalPath, &journal); err != nil {
@@ -219,10 +229,21 @@ func materializeActionCommand(action Action, profile Profile, platform Platform)
 }
 
 func (e Executor) Rollback(ctx context.Context, journalPath string) (Report, error) {
+	return e.RollbackVerified(ctx, journalPath, "")
+}
+
+// RollbackVerified binds an elevated recovery request to the exact reviewed
+// bytes. This is separate from the journal's advisory self-computed digest.
+func (e Executor) RollbackVerified(ctx context.Context, journalPath, expectedDigest string) (Report, error) {
 	started := time.Now().UTC()
 	report := newReport(StageRollback, "", started)
 	report.JournalPath = journalPath
-	journal, warnings, err := readJournal(journalPath)
+	ctx, release, lockErr := mutationContext(ctx)
+	if lockErr != nil {
+		return finishReportError(report, ExitConfirmationRequired, lockErr)
+	}
+	defer release()
+	journal, warnings, err := readJournal(journalPath, expectedDigest)
 	if err != nil {
 		return finishReportError(report, ExitInvalidProfile, fmt.Errorf("read rollback journal: %w", err))
 	}
@@ -238,27 +259,28 @@ func (e Executor) Rollback(ctx context.Context, journalPath string) (Report, err
 	if runner == nil {
 		runner = OSCommandRunner{}
 	}
+	if !journal.WriteAhead && journal.Status == "running" && len(journal.Actions) > 0 {
+		return finishReportError(report, ExitPartialFailure, errors.New("legacy interrupted journal has unknown action state; inspect recorded commands and backups before manual recovery"))
+	}
+	unresolved := false
+	for _, action := range journal.Actions {
+		if resultHasStatus(journal.Results, action.ID, "scheduled") {
+			return finishReportError(report, ExitPartialFailure, errors.New("legacy background action may still be running; verify it has stopped and recover manually before any new Apply"))
+		}
+		if !action.Reversible && resultAttempted(journal.Results, action.ID) {
+			report.Warnings = append(report.Warnings, "Irreversible action is not undone: "+action.ID)
+			if !resultHasStatus(journal.Results, action.ID, "completed") {
+				unresolved = true
+			}
+		}
+	}
 	for i := len(journal.Actions) - 1; i >= 0; i-- {
 		action := journal.Actions[i]
-		if !action.Reversible || len(action.RollbackCommand) == 0 || !resultCompleted(journal.Results, action.ID) || resultHasStatus(journal.Results, action.ID, "rolled-back") {
+		if !action.Reversible || len(action.RollbackCommand) == 0 || !resultAttempted(journal.Results, action.ID) || resultHasStatus(journal.Results, action.ID, "rolled-back") {
 			continue
 		}
 		var buffer safeBuffer
 		result := ActionResult{ActionID: action.ID, Status: "rollback-running", Started: time.Now().UTC()}
-		if resultHasStatus(journal.Results, action.ID, "scheduled") {
-			if cancelCommand := cancelScheduledCommand(action.ID); len(cancelCommand) > 0 {
-				if cancelErr := runner.Run(ctx, cancelCommand, &buffer); cancelErr != nil {
-					result.Status = "rollback-failed"
-					result.Error = "could not cancel scheduled action: " + cancelErr.Error()
-					result.Finished = time.Now().UTC()
-					report.Results = append(report.Results, result)
-					journal.Status = "rollback-failed"
-					journal.Results = append(journal.Results, result)
-					_ = writeJournalAtomic(journalPath, &journal)
-					return finishReportError(report, ExitPartialFailure, errors.New(result.Error))
-				}
-			}
-		}
 		err := runner.Run(ctx, action.RollbackCommand, &buffer)
 		result.Output = buffer.String()
 		result.Finished = time.Now().UTC()
@@ -277,6 +299,13 @@ func (e Executor) Rollback(ctx context.Context, journalPath string) (Report, err
 		if err := writeJournalAtomic(journalPath, &journal); err != nil {
 			return finishReportError(report, ExitPartialFailure, fmt.Errorf("persist rollback result: %w", err))
 		}
+	}
+	if unresolved {
+		journal.Status = "rollback-incomplete"
+		if err := writeJournalAtomic(journalPath, &journal); err != nil {
+			return finishReportError(report, ExitPartialFailure, err)
+		}
+		return finishReportError(report, ExitPartialFailure, errors.New("reversible changes restored, but an interrupted irreversible action needs manual verification"))
 	}
 	journal.Status = "rolled-back"
 	if err := writeJournalAtomic(journalPath, &journal); err != nil {
@@ -297,6 +326,9 @@ func (e Executor) failAndRollback(ctx context.Context, profile Profile, report R
 	}
 	report.Error = cause.Error()
 	if opts.AutoRollback || profile.Safety.AutoRollback {
+		// Cancellation stops forward work, not its bounded recovery.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		defer cancel()
 		runner := e.Runner
 		if runner == nil {
 			runner = OSCommandRunner{}
@@ -308,17 +340,6 @@ func (e Executor) failAndRollback(ctx context.Context, profile Profile, report R
 			}
 			var output safeBuffer
 			result := ActionResult{ActionID: action.ID, Status: "rollback-running", Started: time.Now().UTC()}
-			if action.SelfCutRisk && opts.ScheduleRisky {
-				if cancelCommand := cancelScheduledCommand(action.ID); len(cancelCommand) > 0 {
-					if cancelErr := runner.Run(ctx, cancelCommand, &output); cancelErr != nil {
-						result.Status = "rollback-failed"
-						result.Error = "could not cancel scheduled action: " + cancelErr.Error()
-						result.Finished = time.Now().UTC()
-						report.Results = append(report.Results, result)
-						continue
-					}
-				}
-			}
 			err := runner.Run(ctx, action.RollbackCommand, &output)
 			result.Output = output.String()
 			result.Finished = time.Now().UTC()
@@ -340,43 +361,23 @@ func (e Executor) failAndRollback(ctx context.Context, profile Profile, report R
 	return report, cause
 }
 
+func waitRiskDelay(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 func (e Executor) emit(stage Stage, actionID, kind, message string, report *Report) {
 	event := Event{Timestamp: time.Now().UTC(), Stage: stage, ActionID: actionID, Kind: kind, Message: message}
 	report.Events = append(report.Events, event)
 	if e.Sink != nil {
 		e.Sink(event)
 	}
-}
-
-func scheduledCommand(command []string, delay int, actionID string) ([]string, error) {
-	if len(command) == 0 {
-		return nil, errors.New("cannot schedule an empty command")
-	}
-	taskID := sanitizeTaskID(actionID)
-	if runtime.GOOS == "windows" {
-		quoted := windowsCommandLine(command)
-		payload := fmt.Sprintf("try { & %s } finally { Unregister-ScheduledTask -TaskName 'SSH-Launchpad-%s' -Confirm:$false -ErrorAction SilentlyContinue }", quoted, taskID)
-		encoded := base64.StdEncoding.EncodeToString(stringsToUTF16LE(payload))
-		launcher := fmt.Sprintf(`$a=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -NonInteractive -EncodedCommand %s'; $t=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(%d); $s=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 10); Register-ScheduledTask -TaskName 'SSH-Launchpad-%s' -Action $a -Trigger $t -Settings $s -RunLevel Highest -Force | Out-Null`, encoded, delay, taskID)
-		return psCommand(launcher), nil
-	}
-	shell := shellJoin(command)
-	payload := shQuote(shell)
-	pidFile := filepath.Join(os.TempDir(), "ssh-launchpad-"+taskID+".pid")
-	logFile := filepath.Join(os.TempDir(), "ssh-launchpad-"+taskID+".log")
-	fallback := fmt.Sprintf(`pidfile=%s; logfile=%s; if [ -e "$pidfile" ] || [ -L "$pidfile" ]; then echo 'a delayed SSH Launchpad action is already scheduled' >&2; exit 1; fi; (set -C; : > "$logfile") || { rm -f "$logfile"; exit 1; }; nohup /bin/sh -c %s >> "$logfile" 2>&1 </dev/null & pid=$!; if [ -e "$pidfile" ] || [ -L "$pidfile" ] || ! (set -C; printf '%%s\\n' "$pid" > "$pidfile"); then kill "$pid" 2>/dev/null || true; exit 1; fi`, shQuote(pidFile), shQuote(logFile), shQuote(fmt.Sprintf("trap 'rm -f %s %s' EXIT HUP INT TERM; sleep %d; exec %s", shQuote(pidFile), shQuote(logFile), delay, shell)))
-	script := fmt.Sprintf("if command -v systemd-run >/dev/null 2>&1; then systemd-run --unit=%s --on-active=%ds --collect /bin/sh -c %s; else set -eu; %s; fi", shQuote("ssh-launchpad-"+taskID), delay, payload, fallback)
-	return unixCommand(script), nil
-}
-
-func cancelScheduledCommand(actionID string) []string {
-	taskID := sanitizeTaskID(actionID)
-	if runtime.GOOS == "windows" {
-		return psCommand(fmt.Sprintf(`Unregister-ScheduledTask -TaskName 'SSH-Launchpad-%s' -Confirm:$false -ErrorAction SilentlyContinue`, taskID))
-	}
-	unit := shQuote("ssh-launchpad-" + taskID)
-	pidFile := shQuote(filepath.Join(os.TempDir(), "ssh-launchpad-"+taskID+".pid"))
-	return unixCommand(fmt.Sprintf("if command -v systemd-run >/dev/null 2>&1; then systemctl stop %s.timer %s.service 2>/dev/null || true; systemctl reset-failed %s.timer %s.service 2>/dev/null || true; else pidfile=%s; if [ -L \"$pidfile\" ]; then exit 1; fi; if [ -f \"$pidfile\" ]; then pid=$(cat \"$pidfile\"); case \"$pid\" in ''|*[!0-9]*) exit 1;; esac; kill \"$pid\" 2>/dev/null || true; rm -f \"$pidfile\"; fi; fi", unit, unit, unit, unit, pidFile))
 }
 
 func preflightExternalVerify(target string) error {
@@ -406,30 +407,6 @@ func sanitizeTaskID(value string) string {
 	return builder.String()
 }
 
-func windowsCommandLine(command []string) string {
-	parts := make([]string, len(command))
-	for i, part := range command {
-		parts[i] = "'" + strings.ReplaceAll(part, "'", "''") + "'"
-	}
-	return strings.Join(parts, " ")
-}
-
-func shellJoin(command []string) string {
-	parts := make([]string, len(command))
-	for i, part := range command {
-		parts[i] = shQuote(part)
-	}
-	return strings.Join(parts, " ")
-}
-
-func stringsToUTF16LE(value string) []byte {
-	var out bytes.Buffer
-	for _, codeUnit := range utf16.Encode([]rune(value)) {
-		_ = binary.Write(&out, binary.LittleEndian, codeUnit)
-	}
-	return out.Bytes()
-}
-
 func containsElevated(actions []Action) bool {
 	for _, action := range actions {
 		if action.Mutating && action.RequiresElevation && len(action.Command) > 0 {
@@ -439,9 +416,9 @@ func containsElevated(actions []Action) bool {
 	return false
 }
 
-func resultCompleted(results []ActionResult, id string) bool {
+func resultAttempted(results []ActionResult, id string) bool {
 	for _, result := range results {
-		if result.ActionID == id && (result.Status == "completed" || result.Status == "scheduled") {
+		if result.ActionID == id && (result.Status == "running" || result.Status == "failed" || result.Status == "completed" || result.Status == "scheduled") {
 			return true
 		}
 	}
@@ -545,7 +522,7 @@ func stageVerifiedActionArtifact(action Action, command []string, journalDir, re
 // warning rather than a hard failure: the digest is self-computed, so it can
 // only flag accidental corruption, and a recovery path must not refuse to
 // recover over a checksum it could recompute itself.
-func readJournal(path string) (Journal, []string, error) {
+func readJournal(path string, expectedDigest ...string) (Journal, []string, error) {
 	file, err := openJournalRead(path)
 	if err != nil {
 		return Journal{}, nil, err
@@ -565,6 +542,12 @@ func readJournal(path string) (Journal, []string, error) {
 	}
 	if len(data) > maxJournalBytes {
 		return Journal{}, nil, errors.New("rollback journal exceeds the size limit")
+	}
+	if len(expectedDigest) > 0 && expectedDigest[0] != "" {
+		sum := sha256.Sum256(data)
+		if !strings.EqualFold(hex.EncodeToString(sum[:]), expectedDigest[0]) {
+			return Journal{}, nil, errors.New("rollback journal changed after confirmation")
+		}
 	}
 	var journal Journal
 	if err := json.Unmarshal(data, &journal); err != nil {

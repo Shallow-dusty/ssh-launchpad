@@ -27,6 +27,9 @@ const (
 var ErrCancelled = errors.New("elevation request cancelled")
 
 type Request struct {
+	Operation     launchpad.Stage        `json:"operation,omitempty"`
+	JournalPath   string                 `json:"journalPath,omitempty"`
+	JournalDigest string                 `json:"journalDigest,omitempty"`
 	SchemaVersion int                    `json:"schemaVersion"`
 	Profile       launchpad.Profile      `json:"profile"`
 	Options       launchpad.ApplyOptions `json:"options"`
@@ -49,6 +52,12 @@ func NewRequest(profile launchpad.Profile, options launchpad.ApplyOptions, respo
 		EventsPath:    eventsPath,
 		Language:      language,
 	}
+}
+
+func NewRollbackRequest(journalPath, journalDigest, responsePath, eventsPath string) Request {
+	return Request{SchemaVersion: SchemaVersion, Operation: launchpad.StageRollback,
+		JournalPath: journalPath, JournalDigest: journalDigest, ResponsePath: responsePath, EventsPath: eventsPath,
+		Options: launchpad.ApplyOptions{Confirmed: true}}
 }
 
 func PrecreateFile(path string) error {
@@ -133,7 +142,22 @@ func validateRequest(request Request) error {
 		return fmt.Errorf("unsupported elevation request schema %d", request.SchemaVersion)
 	}
 	if !request.Options.Confirmed {
-		return errors.New("elevated helper accepts only explicitly confirmed Apply requests")
+		return errors.New("elevated helper accepts only explicitly confirmed mutation requests")
+	}
+	if strings.TrimSpace(request.ResponsePath) == "" {
+		return errors.New("elevation response path is required")
+	}
+	if request.Operation == launchpad.StageRollback {
+		if !filepath.IsAbs(request.JournalPath) {
+			return errors.New("rollback journal path must be absolute")
+		}
+		if decoded, err := hex.DecodeString(request.JournalDigest); err != nil || len(decoded) != sha256.Size {
+			return errors.New("rollback requires the reviewed journal digest")
+		}
+		return nil
+	}
+	if request.Operation != "" && request.Operation != launchpad.StageApply {
+		return errors.New("unsupported elevation operation")
 	}
 	planDigest := strings.TrimSpace(request.Options.ExpectedPlanDigest)
 	if decoded, err := hex.DecodeString(planDigest); err != nil || len(decoded) != sha256.Size {

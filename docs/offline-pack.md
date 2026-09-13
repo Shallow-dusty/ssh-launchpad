@@ -33,8 +33,11 @@ non-HTTPS source metadata. A pack with
 `redistributionAllowed: false` is for the creating user's local transfer only
 and must not be uploaded to a Release.
 
-The pack is a verified transport container. Extract it locally and select the
-required installer as `download.offlineBundle`. Starting with v0.2.3, also pin
-its SHA-256 as `download.offlineSha256`; Apply copies the verified bytes into
-privileged staging before execution. Automatic selection of multiple
-third-party components is intentionally deferred.
+The pack is a verified transport container, not an automatic multi-component
+installer. Currently only the Windows Tailscale dependency adapter accepts an
+installer as `download.offlineBundle`, pinned by `download.offlineSha256`;
+Apply copies the verified bytes into staging before execution. Offline OpenSSH
+installation must be completed separately using the platform's trusted package
+or capability servicing mechanism. Plan rejects unsupported offline dependency
+combinations rather than silently attempting online installation. Automatic
+selection of multiple third-party components is intentionally deferred.

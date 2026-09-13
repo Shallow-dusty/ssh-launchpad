@@ -10,11 +10,10 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 type recordingRunner struct {
@@ -93,35 +92,21 @@ func TestSelfCutIsBlockedByDefault(t *testing.T) {
 	}
 }
 
-func TestScheduledFallbackCanBeCancelled(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the fallback is Unix-only")
-	}
-	command, err := scheduledCommand([]string{"restart-ssh"}, 5, "configure_sshd")
-	if err != nil {
+func TestRiskDelayCanBeCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := waitRiskDelay(ctx, time.Hour); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
-	}
-	generated := strings.Join(command, " ")
-	if output, syntaxErr := exec.Command("sh", "-n", "-c", command[2]).CombinedOutput(); syntaxErr != nil {
-		t.Fatalf("scheduled fallback has invalid shell syntax: %v\n%s", syntaxErr, output)
-	}
-	cancelCommand := cancelScheduledCommand("configure_sshd")
-	if output, syntaxErr := exec.Command("sh", "-n", "-c", cancelCommand[2]).CombinedOutput(); syntaxErr != nil {
-		t.Fatalf("scheduled cancellation has invalid shell syntax: %v\n%s", syntaxErr, output)
-	}
-	for _, required := range []string{"systemd-run", ".pid", "set -C", "kill", "pidfile"} {
-		if !strings.Contains(generated, required) {
-			t.Fatalf("scheduled command missing cancellable fallback %q: %s", required, generated)
-		}
-	}
-	cancel := strings.Join(cancelCommand, " ")
-	if !strings.Contains(cancel, "kill") || !strings.Contains(cancel, ".pid") {
-		t.Fatalf("scheduled cancellation does not cover fallback process: %s", cancel)
 	}
 }
 
 func TestScheduledSelfCutRequiresReachableExternalVerify(t *testing.T) {
-	executor := Executor{Runner: &recordingRunner{}}
+	executor := Executor{Runner: &recordingRunner{}, Delay: func(ctx context.Context, _ time.Duration) error {
+		if ctx.Value(mutationLockKey{}) == nil {
+			t.Fatal("delay executed outside mutation lock")
+		}
+		return nil
+	}}
 	plan := Plan{Platform: detectPlatform(), SelfCutDetected: true, Actions: []Action{{ID: "restart-transport", Mutating: true, SelfCutRisk: true, Command: []string{"safe-test-command"}}}}
 	options := ApplyOptions{Confirmed: true, ScheduleRisky: true, JournalDir: t.TempDir()}
 	report, err := executor.Apply(context.Background(), DefaultProfile(), plan, options)
@@ -257,14 +242,6 @@ func TestOfflineArtifactIsHashedAndStagedBeforeExecution(t *testing.T) {
 	report, err = executor.Apply(context.Background(), DefaultProfile(), Plan{Platform: PlatformLinux, Actions: []Action{action}}, ApplyOptions{Confirmed: true, JournalDir: t.TempDir()})
 	if err == nil || report.ExitCode != ExitDownloadFailure || runner.called {
 		t.Fatalf("bad offline artifact was not rejected before execution: %+v %v", report, err)
-	}
-}
-
-func TestUTF16LEPreservesSurrogatePairs(t *testing.T) {
-	got := stringsToUTF16LE("A😀")
-	want := []byte{0x41, 0x00, 0x3d, 0xd8, 0x00, 0xde}
-	if !bytes.Equal(got, want) {
-		t.Fatalf("UTF-16LE mismatch: %x", got)
 	}
 }
 

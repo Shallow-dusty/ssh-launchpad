@@ -45,7 +45,7 @@ func TestPlannerIsIdempotentWhenStateMatches(t *testing.T) {
 	}
 }
 
-func TestPlannerSeparatesInstallConfigServiceAndFirewall(t *testing.T) {
+func TestPlannerPhasesPackageInstallBeforeConfiguration(t *testing.T) {
 	p := DefaultProfile()
 	p.SSH.Port = 2222
 	s := healthySnapshot(PlatformWindows)
@@ -57,10 +57,8 @@ func TestPlannerSeparatesInstallConfigServiceAndFirewall(t *testing.T) {
 	for _, action := range plan.Actions {
 		got[action.Layer] = true
 	}
-	for _, layer := range []string{"ssh-packages", "ssh-config", "ssh-service", "firewall"} {
-		if !got[layer] {
-			t.Errorf("missing layer %s", layer)
-		}
+	if !got["ssh-packages"] || len(got) != 1 || len(plan.Warnings) == 0 {
+		t.Fatalf("installation must finish with a re-check, not stale config mutations: %+v", plan)
 	}
 }
 
@@ -115,7 +113,7 @@ func TestConfigureSSHRestartsOnlyAnAlreadyRunningService(t *testing.T) {
 			if !strings.Contains(strings.Join(action.Command, " "), "Restart-Service sshd") {
 				t.Fatal("running sshd must restart after a validated config change")
 			}
-			if !strings.Contains(strings.Join(action.Command, " "), "backup restored") && !strings.Contains(strings.Join(action.Command, " "), "Copy-Item $b $p") {
+			if !strings.Contains(strings.Join(action.RollbackCommand, " "), "Copy-Item -LiteralPath $b -Destination $p") {
 				t.Fatal("config restart failure must restore the backup")
 			}
 			return
@@ -337,7 +335,7 @@ func TestLANUsesDetectedUnixScopes(t *testing.T) {
 	t.Fatal("LAN firewall action missing")
 }
 
-func TestAuthKeyEnablesOnePassTailnetPlanWithoutPhasing(t *testing.T) {
+func TestAuthKeyJoinsTailnetButDefersMissingSSHConfiguration(t *testing.T) {
 	profile := DefaultProfile()
 	profile.Transport.Install = true
 	profile.Transport.AuthKey = "tskey-" + "auth-example-once"
@@ -358,13 +356,13 @@ func TestAuthKeyEnablesOnePassTailnetPlanWithoutPhasing(t *testing.T) {
 			t.Fatal("Tailscale auth key leaked into the inspectable action plan")
 		}
 	}
-	for _, required := range []string{"install_tailscale", "authenticate_tailscale", "install_ssh", "configure_keys", "configure_firewall"} {
+	for _, required := range []string{"install_tailscale", "authenticate_tailscale", "install_ssh"} {
 		if !slices.Contains(operations, required) {
 			t.Fatalf("one-pass auth-key plan missing %s: %#v", required, operations)
 		}
 	}
-	if len(plan.Blockers) != 0 {
-		t.Fatalf("one-pass auth-key plan should be executable: %#v", plan.Blockers)
+	if len(plan.Blockers) != 0 || slices.Contains(operations, "configure_keys") || slices.Contains(operations, "configure_firewall") {
+		t.Fatalf("bootstrap must be executable but defer configuration until fresh evidence: %+v", plan)
 	}
 }
 
