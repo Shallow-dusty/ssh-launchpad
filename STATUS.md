@@ -136,6 +136,17 @@ Full detail, evidence and remaining boundaries: `docs/acceptance-2026-09.md`.
   v0.2.3-to-v0.2.4 installer upgrade/uninstall smoke, release packages,
   checksums, SBOM, and secret scans.
 
+## Maintenance follow-up
+
+- `golang.org/x/crypto` moved to v0.55.0 (fixes GO-2026-6303 in
+  `x/crypto/ssh`); `golang.org/x/net`, `x/sys`, `x/text` follow as indirect
+  requirements. The pin stays inside Go 1.25 because v0.56.0 requires Go 1.26.
+- Open advisories: GO-2026-6354/6355 (channel-deadlock DoS in
+  `x/crypto/ssh`, fixed in v0.56.0) and GO-2026-5932 (unmaintained
+  `x/crypto/openpgp`). `govulncheck` reports **no reachable** vulnerabilities
+  in this codebase; clearing the remaining two requires migrating the module,
+  CI, and local toolchains to Go 1.26, which is tracked as follow-up work.
+
 ## Current product
 
 - A beginner-first Chinese/English desktop wizard for setting up, checking, and
