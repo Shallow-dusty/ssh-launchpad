@@ -85,9 +85,11 @@ host was restored when only part of it was.
 - **Silent uninstall leaves `uninstall.exe` and the install directory** behind
   (the NSIS uninstaller cannot delete itself while running). Application files,
   shortcuts and registry entries are removed.
-- **Marker-refusal exits 0 in silent mode.** Deleting `.ssh-launchpad-install`
-  correctly stops the uninstaller from deleting files, but the exit code does
-  not distinguish "refused" from "uninstalled".
+- **Marker-refusal is now diagnosable.** Deleting `.ssh-launchpad-install`
+  makes the uninstaller refuse to delete application files; it now also sets
+  exit code 68, so a silent, scripted uninstall can tell a refusal from a
+  completed removal (observed exit 0 during this round, fixed afterwards and
+  guarded by a release-metadata test).
 - **Installer layout**: per-user install in
   `%LOCALAPPDATA%\Programs\SSH Launchpad`, uninstall entry under
   `HKCU\…\Uninstall\SSH Launchpad ContributorsSSH Launchpad` (the Wails

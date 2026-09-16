@@ -65,6 +65,14 @@ Describe 'Release metadata contract' {
         $viteConfig | Should -Match 'VITE_APP_VERSION'
     }
 
+    It 'keeps the uninstaller refusing to delete files without the install marker' {
+        $nsi = Get-Content -LiteralPath (Join-Path $script:Root 'packaging\windows\installer\project.nsi') -Raw
+        $nsi | Should -Match 'Refusing to remove application files'
+        # Silent uninstalls skip the message box, so only a non-zero exit code
+        # can distinguish a refusal from a completed removal.
+        $nsi | Should -Match '(?s)Refusing to remove application files.*?SetErrorLevel\s+68'
+    }
+
     It 'pins every third-party workflow action to a full commit SHA' {
         foreach ($workflowName in @('release.yml', 'ci.yml')) {
             $workflow = Get-Content -LiteralPath (Join-Path $script:Root ".github\workflows\$workflowName")

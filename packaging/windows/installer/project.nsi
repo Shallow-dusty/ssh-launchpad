@@ -107,6 +107,9 @@ Section "uninstall"
 
     IfFileExists "$INSTDIR\.ssh-launchpad-install" +3 0
         MessageBox MB_OK|MB_ICONSTOP "The SSH Launchpad install marker is missing. Refusing to remove application files from $INSTDIR."
+        ; Silent uninstalls skip the message box, so the exit code is the only
+        ; way a caller can tell a refusal from a successful removal.
+        SetErrorLevel 68
         Abort
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"

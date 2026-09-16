@@ -25,6 +25,8 @@ were found and fixed (details and boundaries in `docs/acceptance-2026-09.md`).
   which had reported completed rollbacks as `rollback-failed` and aborted the
   remaining recovery actions.
 - Extend generated-command syntax coverage to every planned Windows action.
+- The uninstaller reports a missing install marker with exit code 68 instead of
+  0, so silent removal can distinguish a refusal from a completed uninstall.
 
 ### Wizard design and interaction (2026-09-13)
 

@@ -97,6 +97,8 @@ Earlier v0.2.6 fixes:
   (PowerShell sets exit code 1 for silent failures), which previously turned a
   completed rollback into `rollback-failed` and aborted the remaining recovery
   actions.
+- The uninstaller now exits with code 68 when it refuses to delete files
+  because the install marker is missing, so silent uninstalls are diagnosable.
 - Generated-command syntax coverage now includes every planned Windows action;
   the fixture previously stopped at the phased install action.
 

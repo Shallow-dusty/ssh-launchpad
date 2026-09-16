@@ -20,6 +20,8 @@ First acceptance round on a disposable Windows Server 2022 host (details in
   and no longer report success as `rollback-failed`, which previously aborted
   the remaining recovery actions.
 - Generated-command syntax coverage now includes every planned Windows action.
+- A silent uninstall that refuses to delete files because the install marker is
+  missing now exits with code 68 instead of 0.
 
 ## Security and recovery fixes
 
