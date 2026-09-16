@@ -102,6 +102,31 @@ host was restored when only part of it was.
 - **Not covered**: Windows 10/11 client behaviour, GUI/UAC click-through
   (Run Command runs as SYSTEM), WebView2-less hosts, macOS/Linux real hosts,
   and the UFW raw-rule gap already documented in `docs/audit-2026-09.md`.
+- **The unelevated Apply gate (exit 4 `NeedsElevation`, no changes) was not
+  observable on this host.** The built-in Administrator account runs with UAC
+  token filtering off, so its "unelevated" processes still hold a full token;
+  Run Command itself runs as SYSTEM. A `runas /trustlevel:0x20000` attempt
+  produced no usable signal. Windows Sandbox is unavailable on Windows 11 Home,
+  so the next round should either create a real standard user (and apply the
+  plan from that session) or set `FilterAdministratorToken=1` before testing.
+  The gate's decision logic is unit-tested locally; only the end-to-end
+  behaviour on Windows remains unverified.
+
+## Next acceptance round
+
+Ordered by risk, for a disposable host (Azure again is cheapest; Windows
+Sandbox is not available on Windows 11 Home):
+
+1. Unelevated Apply gate: standard user (or `FilterAdministratorToken=1`) →
+   expect exit 4 with no configuration, firewall, or service change.
+2. Windows 10/11 client host with winget present: official strategy for both
+   OpenSSH and Tailscale in one pass, plus the WebView2-less case.
+3. Re-run the installer round: marker refusal must exit 68, and confirm the
+   silent-uninstall leftovers (`uninstall.exe` plus the install directory).
+4. Linux (systemd + UFW, then firewalld) and macOS hosts for the Unix paths,
+   including the documented UFW raw-rule gap.
+5. Optional: long-running interruption tests (power loss / kill during Apply)
+   to exercise write-ahead recovery outside the unit fixtures.
 
 ## Cleanup
 
