@@ -118,6 +118,7 @@ type Snapshot struct {
 	SSHPort                         int            `json:"sshPort,omitempty"`
 	SSHPorts                        []int          `json:"sshPorts,omitempty"`
 	SSHPolicyError                  string         `json:"sshPolicyError,omitempty"`
+	SSHPolicyNotInitialized         bool           `json:"sshPolicyNotInitialized,omitempty"`
 	SSHConfigValid                  bool           `json:"sshConfigValid"`
 	SSHAuthenticationChecked        bool           `json:"sshAuthenticationChecked"`
 	SSHPasswordAuthentication       bool           `json:"sshPasswordAuthentication"`
@@ -160,10 +161,13 @@ type FirewallState struct {
 	Provider             string   `json:"provider,omitempty"`
 	Ports                []int    `json:"ports,omitempty"`
 	Scopes               []string `json:"scopes,omitempty"`
+	ManagedScopes        []string `json:"managedScopes,omitempty"`
 	BroadExposure        bool     `json:"broadExposure"`
 	ConflictingRules     []string `json:"conflictingRules,omitempty"`
 	UnresolvedBroadRules []string `json:"unresolvedBroadRules,omitempty"`
 	PortRangeRules       []string `json:"portRangeRules,omitempty"`
+	ThirdPartyBroadRules []string `json:"thirdPartyBroadRules,omitempty"`
+	StaleManagedRules    []string `json:"staleManagedRules,omitempty"`
 }
 
 type TransportState struct {

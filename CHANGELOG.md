@@ -4,6 +4,28 @@ All notable changes are documented here.
 
 ## [0.2.6] - 2026-09-05
 
+### Field acceptance fixes (2026-09-15/16)
+
+First real-machine round on a disposable Windows Server 2022 host; ten defects
+were found and fixed (details and boundaries in `docs/acceptance-2026-09.md`).
+
+- Treat a missing `sshd_config` on a freshly provisioned Windows host as an
+  intermediate state (warn, use the packaged stock template) instead of a hard
+  probe failure, and create `%ProgramData%\ssh` before writing it.
+- Generate missing SSH host keys with SYSTEM/Administrators-only ACLs and
+  SYSTEM ownership so `sshd -t` and the first service start succeed.
+- Distinguish the tool's own firewall scope (`ManagedScopes`), stale managed
+  rules from an earlier port (`StaleManagedRules`, disabled with rollback
+  state), third-party broad rules such as Tailscale's `Tailscale-In` (warning),
+  and Windows rules bound to unrelated programs/app containers/services.
+- Consume rollback backup markers on success so retries no longer fail with
+  "backup already exists"; report an already-absent managed rule instead of
+  failing.
+- Stop Windows rollbacks from exiting 1 when a cleanup path is already gone,
+  which had reported completed rollbacks as `rollback-failed` and aborted the
+  remaining recovery actions.
+- Extend generated-command syntax coverage to every planned Windows action.
+
 ### Wizard design and interaction (2026-09-13)
 
 - Keep the existing three-step architecture, with a clearer home flow preview,

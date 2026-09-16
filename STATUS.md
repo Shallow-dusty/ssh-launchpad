@@ -1,15 +1,22 @@
 # Status
 
-Last locally verified: 2026-09-13
+Last locally verified: 2026-09-16
 
-CI follow-up: run `34735758977` passed Go on all three OSes, UI, Unix scripts
-and secret scanning, but failed a stale Pester race-command assertion and
-`govulncheck@latest` installation (Go 1.26 required). The follow-up pins the
-scanner to v1.6.0 and updates/tests the serialized race gate. Locally, all 12
-metadata Pester tests and the pinned scan under Go 1.25.13 passed. The new
-remote run must pass before treating CI as green.
+Published release: [`v0.2.5`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.5).
+`main` carries the unreleased **v0.2.6 candidate**; it is not tagged or
+published yet.
 
-Current release: [`v0.2.6`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.6) (candidate; release CI pending)
+CI: run `34736001130` on commit `68ee28f` passed all eight jobs (Go on three
+OSes, UI, Unix scripts, Windows PowerShell/Pester, secret scanning). The
+earlier failure was a stale Pester race-command assertion plus
+`govulncheck@latest` requiring a newer Go; the scanner is now pinned to v1.6.0
+and the gate assertion is tested.
+
+Real-machine acceptance: the v0.2.6 candidate passed a first disposable-host
+round on 2026-09-15/16 (Azure Windows Server 2022) — capability install,
+firewall scoping, Tailnet join with a real key-only SSH login, port change with
+self-cut refusals, rollbacks, and the v0.2.5→v0.2.6 installer lifecycle. Ten
+defects found there were fixed; see `docs/acceptance-2026-09.md`.
 
 ## v0.2.6 (2026-09-05, from OneClick field lessons)
 
@@ -69,6 +76,32 @@ Earlier v0.2.6 fixes:
 - Check models Win32-OpenSSH's `administrators_authorized_keys` redirection
   for admin-group users when `sshd -T` prints the stock per-user default.
 
+## v0.2.6 field fixes (2026-09-15/16, real-machine acceptance)
+
+- Fresh Windows capability installs are no longer a dead end: a missing
+  `sshd_config` is a recognised intermediate state (warning plus the packaged
+  stock template) instead of a hard probe failure, and the config action
+  creates `%ProgramData%\ssh` when it does not exist yet.
+- Host keys are generated with SYSTEM/Administrators-only ACLs and SYSTEM
+  ownership when a host has never started sshd, so `sshd -t` validation and
+  first start succeed.
+- Firewall planning distinguishes the tool's own managed rule
+  (`ManagedScopes`), stale managed rules left by an earlier port
+  (`StaleManagedRules`, disabled with rollback state), third-party broad rules
+  such as Tailscale's `Tailscale-In` (warning, not a blocker), and Windows
+  rules bound to another program/app container/service (never SSH exposure).
+- Rollback commands consume their backup markers, so a retry after recovery no
+  longer fails with "backup already exists", and removing an already-absent
+  managed rule is reported instead of failing.
+- Windows rollbacks no longer exit 1 when a cleanup path is already gone
+  (PowerShell sets exit code 1 for silent failures), which previously turned a
+  completed rollback into `rollback-failed` and aborted the remaining recovery
+  actions.
+- Generated-command syntax coverage now includes every planned Windows action;
+  the fixture previously stopped at the phased install action.
+
+Full detail, evidence and remaining boundaries: `docs/acceptance-2026-09.md`.
+
 ## v0.2.5
 
 - Desktop wizard rebuilt around user tasks (check → review → finish; repair
@@ -125,9 +158,12 @@ Earlier v0.2.6 fixes:
 ## Validation boundary
 
 - No SSH, Tailscale, RDP, or firewall Apply was run against the development
-  workstation or any remote host. Linux and macOS system-changing behavior is
-  locally validated through generated-command tests and temporary-file
-  recovery fixtures, not real service changes. Native CI and isolated target
+  workstation or any remote host. Windows system-changing behavior was
+  accepted once on a disposable Azure host (`docs/acceptance-2026-09.md`);
+  Linux and macOS system-changing behavior is still validated only through
+  generated-command tests and temporary-file recovery fixtures, not real
+  service changes. Win10/11 client behavior, GUI/UAC click-through, and a
+  host without WebView2 remain uncovered. Native CI and isolated target
   acceptance remain release gates.
 - The Windows installer is not code-signed, and macOS artifacts are not
   notarized.

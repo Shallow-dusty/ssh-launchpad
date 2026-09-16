@@ -12,6 +12,8 @@ func generatedSyntaxTestActions(t *testing.T, platform Platform) []Action {
 	snapshot := Snapshot{
 		Platform:                 platform,
 		PackageManager:           "apt-get",
+		SSHClient:                Capability{Installed: true},
+		SSHServer:                Capability{Installed: true},
 		SSHService:               ServiceState{Name: "sshd"},
 		SSHAuthenticationChecked: true,
 		SSHPubkeyAuthentication:  true,
@@ -24,8 +26,6 @@ func generatedSyntaxTestActions(t *testing.T, platform Platform) []Action {
 		snapshot.Firewall.Provider = "windows-firewall"
 	}
 	if platform == PlatformMacOS {
-		snapshot.SSHClient = Capability{Installed: true}
-		snapshot.SSHServer = Capability{Installed: true}
 		snapshot.SSHService.Name = "com.openssh.sshd"
 		snapshot.Firewall.Provider = "application-firewall"
 	}

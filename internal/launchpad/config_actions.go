@@ -6,6 +6,14 @@ import (
 	"strings"
 )
 
+// windowsHostKeyBootstrap generates the SSH host identity when it is missing.
+// A fresh capability install ships neither sshd_config nor host keys, and
+// `sshd -t` refuses to validate a config without a usable host key
+// ("no hostkeys available"). The Win32-OpenSSH port only accepts a host key
+// whose private file is restricted to SYSTEM/Administrators *and* owned by
+// SYSTEM, so a user-context generation must fix both the ACL and the owner.
+const windowsHostKeyBootstrap = `$hd=Split-Path -Parent $p; if(-not (Test-Path -LiteralPath (Join-Path $hd 'ssh_host_ed25519_key'))){ & "$env:WINDIR\System32\OpenSSH\ssh-keygen.exe" -A | Out-Null; foreach($hk in Get-ChildItem -Path (Join-Path $hd 'ssh_host_*_key')){ $acl=New-Object System.Security.AccessControl.FileSecurity; $acl.SetAccessRuleProtection($true,$false); $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule('NT AUTHORITY\SYSTEM','FullControl','Allow'))); $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule('BUILTIN\Administrators','FullControl','Allow'))); Set-Acl -LiteralPath $hk.FullName -AclObject $acl; & icacls.exe $hk.FullName /setowner '*S-1-5-18' | Out-Null } }; `
+
 func configCommands(profile Profile, snapshot Snapshot) ([]string, []string) {
 	path := sshConfigPath(snapshot.Platform)
 	backup := path + ".ssh-launchpad-" + backupStamp() + ".bak"
@@ -13,8 +21,8 @@ func configCommands(profile Profile, snapshot Snapshot) ([]string, []string) {
 	encoded := base64.StdEncoding.EncodeToString([]byte(block))
 	if snapshot.Platform == PlatformWindows {
 		prelude := fmt.Sprintf(`$ErrorActionPreference='Stop'; $p='%s'; $b='%s'; `, strings.ReplaceAll(path, "'", "''"), strings.ReplaceAll(backup, "'", "''"))
-		apply := prelude + fmt.Sprintf(`if((Test-Path $b) -or (Test-Path ($b+'.created')) -or (Test-Path ($b+'.tmp'))){throw 'SSH config backup already exists'}; $had=Test-Path -LiteralPath $p; if($had){Copy-Item -LiteralPath $p -Destination ($b+'.tmp'); Move-Item -LiteralPath ($b+'.tmp') -Destination $b; $raw=Get-Content -LiteralPath $p -Raw}else{$raw=Get-Content "$env:WINDIR\System32\OpenSSH\sshd_config_default" -Raw; [IO.File]::WriteAllText(($b+'.created'),'created')}; $raw=[regex]::Replace($raw,'(?ms)^# BEGIN SSH-LAUNCHPAD\r?\n.*?^# END SSH-LAUNCHPAD\r?\n?',''); $raw=[regex]::Replace($raw,'(?im)^\s*Port(?:\s+|=)[^\r\n]*\r?\n?',''); $block=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('%s')); [IO.File]::WriteAllText($p,($block+$raw.TrimStart()),[Text.UTF8Encoding]::new($false)); & "$env:WINDIR\System32\OpenSSH\sshd.exe" -t -f $p; if($LASTEXITCODE -ne 0){throw 'sshd_config validation failed'}; `, encoded)
-		rollback := prelude + `$restored=$false; if(Test-Path -LiteralPath $b){Copy-Item -LiteralPath $b -Destination $p -Force; $restored=$true}elseif(Test-Path -LiteralPath ($b+'.created')){Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue}; `
+		apply := prelude + fmt.Sprintf(`if((Test-Path $b) -or (Test-Path ($b+'.created')) -or (Test-Path ($b+'.tmp'))){throw 'SSH config backup already exists'}; $had=Test-Path -LiteralPath $p; if($had){Copy-Item -LiteralPath $p -Destination ($b+'.tmp'); Move-Item -LiteralPath ($b+'.tmp') -Destination $b; $raw=Get-Content -LiteralPath $p -Raw}else{$dir=Split-Path -Parent $p; if(-not (Test-Path -LiteralPath $dir)){New-Item -ItemType Directory -Force -Path $dir | Out-Null}; $raw=Get-Content "$env:WINDIR\System32\OpenSSH\sshd_config_default" -Raw; [IO.File]::WriteAllText(($b+'.created'),'created')}; $raw=[regex]::Replace($raw,'(?ms)^# BEGIN SSH-LAUNCHPAD\r?\n.*?^# END SSH-LAUNCHPAD\r?\n?',''); $raw=[regex]::Replace($raw,'(?im)^\s*Port(?:\s+|=)[^\r\n]*\r?\n?',''); $block=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('%s')); [IO.File]::WriteAllText($p,($block+$raw.TrimStart()),[Text.UTF8Encoding]::new($false)); `+windowsHostKeyBootstrap+`& "$env:WINDIR\System32\OpenSSH\sshd.exe" -t -f $p; if($LASTEXITCODE -ne 0){throw 'sshd_config validation failed'}; `, encoded)
+		rollback := prelude + `$restored=$false; if(Test-Path -LiteralPath $b){Copy-Item -LiteralPath $b -Destination $p -Force; $restored=$true}elseif(Test-Path -LiteralPath ($b+'.created')){Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue}; foreach($f in @($b,($b+'.created'),($b+'.tmp'))){ if(Test-Path -LiteralPath $f){ Remove-Item -LiteralPath $f -Force -ErrorAction Stop } }; `
 		if snapshot.SSHService.Running {
 			apply += `Restart-Service sshd -ErrorAction Stop`
 			rollback += `if($restored){Restart-Service sshd -ErrorAction Stop}`
@@ -36,6 +44,6 @@ func configCommands(profile Profile, snapshot Snapshot) ([]string, []string) {
 		apply += "; " + restart
 		rollback += restart + "; "
 	}
-	rollback += "fi"
+	rollback += `rm -f "$backup" "$backup.tmp"; fi`
 	return unixCommand(apply), unixCommand(rollback)
 }

@@ -1,6 +1,25 @@
 # SSH Launchpad v0.2.6
 
-Candidate notes; publishing and native acceptance remain separate gates.
+Candidate notes; publishing remains a separate gate.
+
+## Field acceptance fixes
+
+First acceptance round on a disposable Windows Server 2022 host (details in
+`docs/acceptance-2026-09.md`) — highlights:
+
+- A freshly provisioned Windows host with no `sshd_config` is now a recognised
+  intermediate state: the wizard warns, writes the packaged stock template, and
+  creates the configuration directory instead of dead-ending.
+- Missing SSH host keys are generated with SYSTEM/Administrators-only ACLs and
+  SYSTEM ownership, so `sshd -t` and the first start succeed.
+- Firewall planning tells apart the tool's own managed rule, stale managed
+  rules from an earlier port (disabled with rollback state), third-party broad
+  rules such as Tailscale's `Tailscale-In` (warning), and Windows rules bound to
+  unrelated programs, app containers or services.
+- Rollbacks consume their backup markers, tolerate already-absent resources,
+  and no longer report success as `rollback-failed`, which previously aborted
+  the remaining recovery actions.
+- Generated-command syntax coverage now includes every planned Windows action.
 
 ## Security and recovery fixes
 

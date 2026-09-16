@@ -100,6 +100,12 @@ func (Planner) Build(profile Profile, snapshot Snapshot) (plan Plan) {
 		plan.Blockers = append(plan.Blockers, snapshot.SSHPolicyError)
 		return plan
 	}
+	if snapshot.SSHPolicyNotInitialized {
+		plan.Warnings = append(plan.Warnings, "The target has no SSH policy file yet (a fresh Windows OpenSSH install creates it on first service start). Apply writes the packaged sshd_config_default template with the managed block instead of guessing existing policy.")
+	}
+	if len(snapshot.Firewall.ThirdPartyBroadRules) > 0 {
+		plan.Warnings = append(plan.Warnings, fmt.Sprintf("The installed third-party transport added broad inbound rules (%s) that admit every port from their firewall profiles. SSH Launchpad scopes only its own rule (%s); review or narrow those rules where the matching profile is untrusted.", strings.Join(uniqueStrings(snapshot.Firewall.ThirdPartyBroadRules), ", "), strings.Join(exposureScopes(profile, snapshot), ", ")))
+	}
 	configDrift := snapshot.SSHPort != profile.SSH.Port || snapshot.SSHPort == 0 || len(snapshot.SSHPorts) > 1 ||
 		!snapshot.SSHConfigValid || !snapshot.SSHAuthenticationChecked ||
 		snapshot.SSHPasswordAuthentication != profile.SSH.PasswordAuthentication ||
@@ -295,7 +301,11 @@ func enableSSHAction(profile Profile, snapshot Snapshot) Action {
 	a.Reversible = true
 	switch snapshot.Platform {
 	case PlatformWindows:
-		a.Command = psCommand(`$ErrorActionPreference='Stop'; Set-Service sshd -StartupType Automatic; if((Get-Service sshd).Status -ne 'Running'){Start-Service sshd}`)
+		// A fresh capability install ships no sshd_config and no host keys; the
+		// official first-run bootstrap is starting sshd once. Generate the host
+		// keys explicitly (restricted ACLs) so Enable and Start cannot fail on a
+		// host whose policy file this run just created from the stock template.
+		a.Command = psCommand(`$ErrorActionPreference='Stop'; $d=Join-Path $env:ProgramData 'ssh'; if(-not (Test-Path -LiteralPath (Join-Path $d 'ssh_host_ed25519_key'))){ if(-not (Test-Path -LiteralPath $d)){New-Item -ItemType Directory -Force -Path $d | Out-Null}; & "$env:WINDIR\System32\OpenSSH\ssh-keygen.exe" -A; foreach($f in Get-ChildItem -Path (Join-Path $d 'ssh_host_*_key')){ $acl=New-Object System.Security.AccessControl.FileSecurity; $acl.SetAccessRuleProtection($true,$false); $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule('NT AUTHORITY\SYSTEM','FullControl','Allow'))); $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule('BUILTIN\Administrators','FullControl','Allow'))); Set-Acl -LiteralPath $f.FullName -AclObject $acl; & icacls.exe $f.FullName /setowner '*S-1-5-18' | Out-Null } }; Set-Service sshd -StartupType Automatic; if((Get-Service sshd).Status -ne 'Running'){Start-Service sshd}`)
 		policy := snapshot.SSHService.StartPolicy
 		if strings.EqualFold(policy, "auto") || strings.EqualFold(policy, "automatic") {
 			policy = "Automatic"
@@ -342,10 +352,16 @@ func configureFirewallAction(profile Profile, snapshot Snapshot, scopes []string
 	a := baseAction("configure-firewall", "configure_firewall", "firewall", RiskHigh, fmt.Sprintf("Allow TCP %d from %s only", profile.SSH.Port, strings.Join(scopes, ", ")), "No port-and-scope-aware firewall rule matches the profile.")
 	a.RequiresElevation = true
 	a.Reversible = true
-	name := fmt.Sprintf("SSH-Launchpad-TCP-%d", profile.SSH.Port)
+	name := managedFirewallRuleName(profile.SSH.Port)
 	switch snapshot.Platform {
 	case PlatformWindows:
-		a.Command, a.RollbackCommand = windowsFirewallCommands(name, profile.SSH.Port, scopes, snapshot.Firewall.ConflictingRules)
+		conflicts := append([]string(nil), snapshot.Firewall.ConflictingRules...)
+		for _, stale := range snapshot.Firewall.StaleManagedRules {
+			if stale != name {
+				conflicts = append(conflicts, stale)
+			}
+		}
+		a.Command, a.RollbackCommand = windowsFirewallCommands(name, profile.SSH.Port, scopes, conflicts)
 	case PlatformMacOS:
 		a.Command = nil
 		a.Risk = RiskMedium
@@ -401,7 +417,7 @@ func baseAction(id, operation, layer string, risk Risk, summary, reason string) 
 }
 
 func firewallMatches(state FirewallState, profile Profile, snapshot Snapshot) bool {
-	if !state.Checked || !state.Enabled || !supportedFirewallProvider(snapshot.Platform, state.Provider) || state.BroadExposure || len(state.UnresolvedBroadRules) > 0 || len(state.PortRangeRules) > 0 || !containsInt(state.Ports, profile.SSH.Port) {
+	if !state.Checked || !state.Enabled || !supportedFirewallProvider(snapshot.Platform, state.Provider) || state.BroadExposure || len(state.UnresolvedBroadRules) > 0 || len(state.PortRangeRules) > 0 || len(state.StaleManagedRules) > 0 || !containsInt(state.Ports, profile.SSH.Port) {
 		return false
 	}
 	desired := firewallScopeSet(exposureScopes(profile, snapshot))
@@ -417,10 +433,29 @@ func firewallMatches(state FirewallState, profile Profile, snapshot Snapshot) bo
 	return true
 }
 
+func uniqueStrings(values []string) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
+}
+
 func hasUnexpectedFirewallScopes(state FirewallState, desiredScopes []string, ignoreRemediableBroad bool) bool {
 	desired := firewallScopeSet(desiredScopes)
+	managed := firewallScopeSet(state.ManagedScopes)
 	for scope := range firewallScopeSet(state.Scopes) {
 		if ignoreRemediableBroad && broadFirewallScope(scope) {
+			continue
+		}
+		if managed[scope] {
+			// Only the managed rule carries this scope, and Apply rewrites that
+			// rule in place, so it is not unexplained inbound exposure.
 			continue
 		}
 		if !desired[scope] {
@@ -428,6 +463,12 @@ func hasUnexpectedFirewallScopes(state FirewallState, desiredScopes []string, ig
 		}
 	}
 	return false
+}
+
+// managedFirewallRuleName mirrors the Windows rule Apply owns and updates in
+// place. The probe uses it to separate our own scope from foreign exposure.
+func managedFirewallRuleName(port int) string {
+	return fmt.Sprintf("SSH-Launchpad-TCP-%d", port)
 }
 
 func firewallScopeSet(scopes []string) map[string]bool {

@@ -2,15 +2,26 @@ package launchpad
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
+// errSSHPolicyNotInitialized marks a missing top-level policy file on a
+// platform whose adapter can recreate the stock default. A fresh Windows
+// capability install ships no sshd_config: the file materializes only when
+// sshd first starts. Treating that documented intermediate state as a hard
+// probe failure dead-ends the phased flow before the config action runs.
+var errSSHPolicyNotInitialized = errors.New("SSH policy file does not exist yet")
+
 // Inspect configuration independently of sshd -T: the global dump omits Match
 // policy. Unknown syntax fails closed rather than guessing connection semantics.
 func inspectSSHPolicy(path string, platform Platform) error {
+	if _, err := os.Stat(path); err != nil && os.IsNotExist(err) && platform == PlatformWindows {
+		return errSSHPolicyNotInitialized
+	}
 	return inspectSSHFile(path, filepath.Dir(path), platform, map[string]bool{}, false, 0)
 }
 
