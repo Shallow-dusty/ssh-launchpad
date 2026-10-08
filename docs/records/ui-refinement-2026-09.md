@@ -1,5 +1,8 @@
 # UI refinement — 2026-09-13
 
+> Dated design and validation record. Current status: [STATUS](../../STATUS.md).
+> Documentation index: [docs/README](../README.md).
+
 ## Scope and reference decisions
 
 Keep the Wails + vanilla TypeScript/CSS three-step wizard, existing components,

@@ -1,190 +1,87 @@
-# Status
+# Current status
 
-Last locally verified: 2026-09-16
+Product validation baseline: **2026-09-16**. Documentation reorganized:
+2026-10-08; this does not renew product test or release evidence.
 
-Published release: [`v0.2.5`](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.5).
-`main` carries the unreleased **v0.2.6 candidate**; it is not tagged or
-published yet.
+## Release state
 
-CI: run `34736001130` on commit `68ee28f` passed all eight jobs (Go on three
-OSes, UI, Unix scripts, Windows PowerShell/Pester, secret scanning). The
-earlier failure was a stale Pester race-command assertion plus
-`govulncheck@latest` requiring a newer Go; the scanner is now pinned to v1.6.0
-and the gate assertion is tested.
+| Item | Recorded state |
+| --- | --- |
+| Published release | [v0.2.5](https://github.com/Shallow-dusty/ssh-launchpad/releases/tag/v0.2.5) |
+| Source version | **v0.2.6 candidate**, not tagged or published in this baseline |
+| Last recorded green CI | Run `34736001130`, commit `68ee28f`; all eight jobs passed. This is not proof of CI on later commits. |
+| Real-machine acceptance | One disposable Azure Windows Server 2022 round, 2026-09-15/16; details below |
 
-Real-machine acceptance: the v0.2.6 candidate passed a first disposable-host
-round on 2026-09-15/16 (Azure Windows Server 2022) — capability install,
-firewall scoping, Tailnet join with a real key-only SSH login, port change with
-self-cut refusals, rollbacks, and the v0.2.5→v0.2.6 installer lifecycle. Ten
-defects found there were fixed; see `docs/acceptance-2026-09.md`.
+## What the product does
 
-## v0.2.6 (2026-09-05, from OneClick field lessons)
+- Beginner-first Chinese/English Windows desktop wizard and a matching CLI.
+- Shared Go Check / Plan / Apply / Verify / Rollback engine for Windows,
+  Linux, macOS, and a distinct WSL target layer.
+- Controller public-key onboarding, optional provisioning cards and Tailscale
+  bootstrap; private keys stay on the controller.
+- Tailnet-first exposure, scoped firewall plans, self-cut protection,
+  digest-bound confirmation, mutation locks, and recovery journals.
+- Windows installer, multi-platform portable CLI bundles, bilingual launchers,
+  offline help, and checksummed dependency-pack builders.
 
-Security and recovery hardening after the 2026-09-12 full audit:
+Check and Plan are read-only; Verify never elevates. The UI does not decide
+safety policy or build system commands. See [architecture](docs/architecture.md)
+and [platform support](docs/platform-support.md) for the execution contract.
 
-- SSH policy checks fail closed on unsupported `Match`, custom `ListenAddress`,
-  included `Port`, recursive `Include`, and extra effective SSH ports; port
-  changes remove prior top-level `Port` directives instead of leaving the old
-  listener configured.
-- Windows/UFW/firewalld reject unsupported evidence in their supported
-  inventories: Any-protocol Windows rules, UFW application
-  profiles, firewalld services/zones/direct rules, runtime drift, and
-  non-accept rules are no longer guessed as safe allow rules. UFW custom raw
-  rules outside `status verbose` remain an explicit coverage gap; see
-  `docs/audit-2026-09.md`.
-- Firewall mutations propagate every command failure. Unix rollback removes
-  only scopes introduced by the reviewed plan; Windows rollback restores prior
-  managed-rule scopes and conflicting-rule enabled state.
-- Apply journals in-flight intent before the first possible side effect.
-  Failed/interrupted reversible actions are recoverable, legacy uncertain
-  journals fail closed for manual review, automatic recovery uses a bounded
-  context independent of Apply cancellation, and all entry points share a
-  system mutation lock.
-- Service and authorized_keys rollback restores prior running/startup state,
-  file contents, ownership, and Windows ACLs. Missing Windows sshd.exe repair
-  is a deliberate first phase followed by a fresh Check/Plan.
-- The GUI retains failed Apply reports for recovery, supports digest-bound
-  elevated Rollback on Windows, keeps tracking an over-deadline helper instead
-  of declaring it cancelled, and blocks navigation during busy mutations.
-- Release defaults and candidate notes are aligned through a pre-packaging
-  metadata gate.
-- Risky delays retain the mutation lock and are cancellable; no detached
-  mutation is left behind. Old scheduled journals require manual recovery.
-- UI refinement retains the existing three-step framework: explicit flow,
-  recovery actions on failures, fresh review for incomplete verification,
-  shareable connection details and a clear local-check boundary. See
-  `docs/ui-refinement-2026-09.md` for reference and viewport evidence.
-- Final local checks: serialized Go package tests with race detection, vet,
-  staticcheck, govulncheck, ShellCheck, frontend typecheck/build, and 23 browser
-  scenarios passed. Windows launchpad tests (including generated PowerShell
-  syntax) also passed natively through WSL interop. Windows amd64 and macOS
-  arm64 builds passed; this is not live system-change acceptance.
+## v0.2.6 candidate evidence
 
-Earlier v0.2.6 fixes:
+| Area | Recorded result | Limit |
+| --- | --- | --- |
+| Local checks | Serialized Go unit/race tests, vet, staticcheck, govulncheck, ShellCheck, frontend typecheck/build, and 23 browser scenarios passed | Historical checks, not rerun by reorganizing documentation |
+| Platform builds | Cross-builds plus Windows-native core tests with mocked mutations passed | Not live service or GUI/UAC acceptance |
+| Disposable Windows Server 2022 | OpenSSH install, firewall scoping, Tailscale join, real key-only SSH login, port changes, self-cut refusals, rollbacks, and v0.2.5 → v0.2.6 installer lifecycle passed | One server environment, not Windows 10/11 |
+| Field fixes | Ten discovered defects fixed with regression coverage | See the acceptance record for the exact observed scope |
+| Uninstaller refusal | Missing install marker now returns exit 68; metadata regression test covers the change | Fixed after the live round; live recheck is pending |
 
-- Windows firewall scope comparison normalizes netmask-form scopes
-  (`100.64.0.0/255.192.0.0` → `100.64.0.0/10`); before this, a correctly
-  scoped rule reported drift on every Check and was rebuilt on every Apply.
-- Windows OpenSSH Server self-repair: when the sshd service is registered
-  but sshd.exe is missing (antivirus quarantine), the plan now offers a
-  capability reinstall instead of dead-ending in failed sshd probes. Gated
-  to Windows-capability installs; foreign installers fail with explicit
-  guidance. Validated end-to-end against the same failure mode in the
-  [OneClick minimal product line](https://github.com/Shallow-dusty/remote-onboarder).
-- authorized_keys merge commands survive PowerShell 5.1 single-element
-  pipeline unrolling (explicit array wrapping).
-- Check models Win32-OpenSSH's `administrators_authorized_keys` redirection
-  for admin-group users when `sshd -T` prints the stock per-user default.
+Detailed evidence, not duplicate status summaries:
 
-## v0.2.6 field fixes (2026-09-15/16, real-machine acceptance)
+- [Security and recovery audit, 2026-09-13](docs/records/audit-2026-09.md)
+- [Real-machine acceptance, 2026-09-15/16](docs/records/acceptance-2026-09.md)
+- [UI refinement and browser evidence, 2026-09-13](docs/records/ui-refinement-2026-09.md)
+- [Version changes](CHANGELOG.md)
 
-- Fresh Windows capability installs are no longer a dead end: a missing
-  `sshd_config` is a recognised intermediate state (warning plus the packaged
-  stock template) instead of a hard probe failure, and the config action
-  creates `%ProgramData%\ssh` when it does not exist yet.
-- Host keys are generated with SYSTEM/Administrators-only ACLs and SYSTEM
-  ownership when a host has never started sshd, so `sshd -t` validation and
-  first start succeed.
-- Firewall planning distinguishes the tool's own managed rule
-  (`ManagedScopes`), stale managed rules left by an earlier port
-  (`StaleManagedRules`, disabled with rollback state), third-party broad rules
-  such as Tailscale's `Tailscale-In` (warning, not a blocker), and Windows
-  rules bound to another program/app container/service (never SSH exposure).
-- Rollback commands consume their backup markers, so a retry after recovery no
-  longer fails with "backup already exists", and removing an already-absent
-  managed rule is reported instead of failing.
-- Windows rollbacks no longer exit 1 when a cleanup path is already gone
-  (PowerShell sets exit code 1 for silent failures), which previously turned a
-  completed rollback into `rollback-failed` and aborted the remaining recovery
-  actions.
-- The uninstaller now exits with code 68 when it refuses to delete files
-  because the install marker is missing, so silent uninstalls are diagnosable.
-- Generated-command syntax coverage now includes every planned Windows action;
-  the fixture previously stopped at the phased install action.
+## Open validation and product limits
 
-Full detail, evidence and remaining boundaries: `docs/acceptance-2026-09.md`.
+- Unelevated Windows Apply must still be verified end to end: exit 4
+  (`NeedsElevation`) with no changes. The first host's Administrator token
+  could not exercise this gate.
+- Windows 10/11, actual GUI/UAC click-through, and WebView2-less hosts remain
+  uncovered. Linux/macOS system-changing paths have generated-command and
+  fixture coverage, not real-host acceptance.
+- Winget-less Windows hosts cannot use one global download strategy for both
+  OpenSSH capability installation and offline Tailscale installation; the first
+  round used two stages.
+- UFW custom raw rules are not inventoried. Third-party broad firewall rules
+  can admit access beyond this tool's managed scopes; the plan warns.
+- Rollback is fail-fast and only covers reversible actions. A failed recovery
+  stops the chain and requires journal review; software installation and
+  Tailnet membership may remain.
+- Windows artifacts are unsigned; macOS artifacts are not notarized.
+- No system-changing acceptance was run on the development workstation or a
+  personal production host. The disposable Azure environment was destroyed;
+  cleanup is recorded in the acceptance report.
 
-## v0.2.5
+## Dependency follow-up
 
-- Desktop wizard rebuilt around user tasks (check → review → finish; repair
-  mode: diagnose → repair → verify) following the deep audit in
-  `docs/design-audit-2026-08.md`: self-driving plan step with preselected
-  keys, consequence-labelled network choice, issue lists, persistent error
-  states, live-applied advanced settings, restrained visual tokens, and
-  Lucide icons. Safety simplifications: rollback-journal digest mismatch
-  downgraded to a warning; the GUI's third pre-elevation Probe+Plan removed
-  (digest check stays authoritative inside Apply).
-- Local candidate validation covers Go unit/race/vet, staticcheck,
-  govulncheck, gosec, shellcheck, and gitleaks, Windows/macOS
-  cross-compilation, frontend typecheck/build, and 14 browser scenarios.
-  Windows-native checks (Pester, Wails/NSIS installer, v0.2.4-to-v0.2.5
-  upgrade smoke) run in release CI on a Windows runner.
+`golang.org/x/crypto` is v0.55.0 on Go 1.25.13. The recorded govulncheck result
+has no reachable vulnerabilities, but module advisories GO-2026-6354/6355
+(channel-deadlock DoS) and GO-2026-5932 (unmaintained openpgp) remain. Clearing
+the channel-deadlock advisories requires x/crypto v0.56.0 and Go 1.26; the
+openpgp maintenance advisory is a separate dependency-use review, not a claim
+that a toolchain upgrade fixes it.
 
-## v0.2.4
+## Where to go next
 
-- Personal cards (`.sshlaunchpad-card`) carry controller public keys, SSH
-  port, display labels, network mode, and an optional Tailscale auth key from
-  the controller to a new device, prefilling the wizard and starting from the
-  read-only Check. Unknown card fields are ignored for forward compatibility.
-- `transport.authKey` enables one-pass unattended Tailnet bootstrap; the key
-  is materialized only inside Apply and redacted from plans, journals,
-  reports, and exported profiles (see `docs/threat-model.md`).
-- The elevation helper consumes its credential-bearing request before Apply;
-  cancellation also removes it. Exact-key and wrapped-key redaction now covers
-  command output, failure text, journals, and reports.
-- Local candidate validation covers Go unit/race/vet and security checks,
-  Windows/macOS cross-compilation, Windows PowerShell 5.1 and PowerShell 7
-  Pester, frontend typecheck/build and 13 browser scenarios, Wails/NSIS, a
-  v0.2.3-to-v0.2.4 installer upgrade/uninstall smoke, release packages,
-  checksums, SBOM, and secret scans.
+- **Next work and priorities:** [ROADMAP.md](ROADMAP.md)
+- **Build/test commands and directory map:** [development](docs/development.md)
+- **Before tagging:** [release checklist](docs/release-verification.md)
+- **All documentation:** [docs/README.md](docs/README.md)
 
-## Maintenance follow-up
-
-- `golang.org/x/crypto` moved to v0.55.0 (fixes GO-2026-6303 in
-  `x/crypto/ssh`); `golang.org/x/net`, `x/sys`, `x/text` follow as indirect
-  requirements. The pin stays inside Go 1.25 because v0.56.0 requires Go 1.26.
-- Open advisories: GO-2026-6354/6355 (channel-deadlock DoS in
-  `x/crypto/ssh`, fixed in v0.56.0) and GO-2026-5932 (unmaintained
-  `x/crypto/openpgp`). `govulncheck` reports **no reachable** vulnerabilities
-  in this codebase; clearing the remaining two requires migrating the module,
-  CI, and local toolchains to Go 1.26, which is tracked as follow-up work.
-
-## Current product
-
-- A beginner-first Chinese/English desktop wizard for setting up, checking, and
-  repairing remote access without editing YAML or starting as administrator.
-- A matching beginner CLI wizard, stable non-interactive JSON mode, and
-  bilingual double-click launchers.
-- A shared Go Check/Plan/Apply/Verify/Rollback engine for Windows, Linux, macOS,
-  and a distinct WSL target layer.
-- Public-key onboarding that distinguishes the target computer from the
-  controller, never transports private keys, and keeps host-fingerprint
-  verification visible.
-- Tailnet-only recommended exposure, source- and port-aware firewall planning,
-  self-cut protection, process locks, rollback journals, and external
-  verification guidance.
-- Standalone portable bundles, bootstraps, offline help, and dependency-pack
-  builders. The tool itself runs offline; the Windows Tailscale adapter accepts
-  a user-supplied, checksummed installer. Offline OpenSSH installation must be
-  performed separately with trusted platform servicing tools.
-
-## Validation boundary
-
-- No SSH, Tailscale, RDP, or firewall Apply was run against the development
-  workstation or any remote host. Windows system-changing behavior was
-  accepted once on a disposable Azure host (`docs/acceptance-2026-09.md`);
-  Linux and macOS system-changing behavior is still validated only through
-  generated-command tests and temporary-file recovery fixtures, not real
-  service changes. Win10/11 client behavior, GUI/UAC click-through, and a
-  host without WebView2 remain uncovered. Native CI and isolated target
-  acceptance remain release gates.
-- The Windows installer is not code-signed, and macOS artifacts are not
-  notarized.
-- What was verified for each release is recorded in `CHANGELOG.md`.
-
-## Release assets
-
-- Unsigned Windows x64 GUI installer.
-- Windows x64/ARM64, Linux x64/ARM64, and macOS x64/ARM64 portable CLI bundles.
-- Standalone bilingual bootstrap bundle.
-- SHA-256 manifest and SPDX JSON SBOM.
+Completed version narratives live in CHANGELOG, dated evidence in
+`docs/records/`, and superseded material in `docs/90.Archive/`. This file
+contains only the current baseline and open boundaries.

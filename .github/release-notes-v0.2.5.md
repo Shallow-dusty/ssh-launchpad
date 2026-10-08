@@ -2,7 +2,7 @@
 
 This release rebuilds the desktop wizard around user tasks and restrains the
 visual system, following a deep audit recorded in
-`docs/design-audit-2026-08.md`.
+`docs/90.Archive/01.2026-08-audits/design-audit-2026-08.md`.
 
 ## Highlights
 

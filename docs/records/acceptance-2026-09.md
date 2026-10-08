@@ -1,5 +1,8 @@
 # Real-machine acceptance, 2026-09-15/16 (v0.2.6 candidate)
 
+> Dated evidence, not a rolling status page. See [STATUS](../../STATUS.md)
+> for the current baseline and [ROADMAP](../../ROADMAP.md) for pending work.
+
 This is the first acceptance round that mutates real SSH, firewall and
 transport state on a disposable host. Earlier rounds were local-only
 (unit/race tests, generated-command syntax checks, browser tests). Every
@@ -101,7 +104,7 @@ host was restored when only part of it was.
   real product limitation for winget-less hosts, not a test artifact.
 - **Not covered**: Windows 10/11 client behaviour, GUI/UAC click-through
   (Run Command runs as SYSTEM), WebView2-less hosts, macOS/Linux real hosts,
-  and the UFW raw-rule gap already documented in `docs/audit-2026-09.md`.
+  and the UFW raw-rule gap already documented in `docs/records/audit-2026-09.md`.
 - **The unelevated Apply gate (exit 4 `NeedsElevation`, no changes) was not
   observable on this host.** The built-in Administrator account runs with UAC
   token filtering off, so its "unelevated" processes still hold a full token;

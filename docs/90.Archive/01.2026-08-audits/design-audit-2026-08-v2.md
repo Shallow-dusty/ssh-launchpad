@@ -1,7 +1,7 @@
 # Design audit v2 — product-level review of v0.2.5
 
 > Historical review, not the current implementation specification. See the
-> [September UI refinement](ui-refinement-2026-09.md) for current decisions and
+> [September UI refinement](../../records/ui-refinement-2026-09.md) for current decisions and
 > validation; old copy, timings and proposed behavior below are retained as history.
 
 Date: 2026-08-01

@@ -7,7 +7,7 @@ All notable changes are documented here.
 ### Field acceptance fixes (2026-09-15/16)
 
 First real-machine round on a disposable Windows Server 2022 host; ten defects
-were found and fixed (details and boundaries in `docs/acceptance-2026-09.md`).
+were found and fixed (details and boundaries in `docs/records/acceptance-2026-09.md`).
 
 - Treat a missing `sshd_config` on a freshly provisioned Windows host as an
   intermediate state (warn, use the packaged stock template) instead of a hard

@@ -5,7 +5,7 @@ Candidate notes; publishing remains a separate gate.
 ## Field acceptance fixes
 
 First acceptance round on a disposable Windows Server 2022 host (details in
-`docs/acceptance-2026-09.md`) — highlights:
+`docs/records/acceptance-2026-09.md`) — highlights:
 
 - A freshly provisioned Windows host with no `sshd_config` is now a recognised
   intermediate state: the wizard warns, writes the packaged stock template, and
@@ -74,7 +74,10 @@ First acceptance round on a disposable Windows Server 2022 host (details in
   tag-matched notes are validated before release packaging.
 - Local checks include Go tests/race/vet/staticcheck/govulncheck, ShellCheck,
   frontend typecheck/build, 23 browser scenarios and six-platform cross-builds.
-  Windows core tests also passed natively with mocked mutations. Installer,
-  upgrade and isolated-VM smoke remain outstanding; no live host Apply was run.
-- See `docs/audit-2026-09.md` and `docs/ui-refinement-2026-09.md` for evidence,
+  Windows core tests also passed natively with mocked mutations. A subsequent
+  disposable Windows Server 2022 round accepted live Apply/Verify/Rollback and
+  installer upgrade/uninstall. Windows 10/11, GUI/UAC, the unelevated Apply gate
+  and the post-round uninstall refusal exit-code fix still need live acceptance.
+- See `docs/records/audit-2026-09.md`, `docs/records/acceptance-2026-09.md`
+  and `docs/records/ui-refinement-2026-09.md` for evidence,
   unresolved limits and historical/current documentation distinctions.

@@ -23,4 +23,17 @@ contracts, not process theater.
 - When changing planner output, Apply, rollback, or download verification, add
   or update the matching tests.
 - Generated files go under `build/`, `dist/`, or `frontend/test-results/`.
-  Don't leave browser captures, reports, or local journals in the repo.
+  Keep raw reports/journals in ignored output directories, never in tracked
+  source or the repository root. Preserve old acceptance evidence.
+
+## Documentation and layout
+
+- `STATUS.md` owns the current version, validation baseline and open limits;
+  `ROADMAP.md` owns pending work; `CHANGELOG.md` owns completed version history.
+- Current topic guides stay in `docs/`; dated audit/design/acceptance summaries
+  go in `docs/records/`. Superseded material goes in `docs/90.Archive/`, with
+  an `ARCHIVE_NOTE.md` stating source, reason and active replacement.
+- Update `docs/README.md` and inbound references when moving documents.
+  Document cleanup never renews test evidence or closes an acceptance gate.
+- Root Go bridge files, `build/appicon.png`, and `frontend/dist` have existing
+  Wails build roles. Consult `docs/development.md` before relocating them.

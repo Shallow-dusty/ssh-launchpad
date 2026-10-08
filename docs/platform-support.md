@@ -20,16 +20,19 @@ does not require ANSI color.
 
 The table's evidence column records the original v0.2.0 baseline, not a new
 execution of every CI/native test. Current candidate evidence is in
-[the September audit](audit-2026-09.md).
+[the September audit](records/audit-2026-09.md) and
+[the subsequent real-machine acceptance](records/acceptance-2026-09.md).
 
 ## Current native boundary
 
 - Real Apply was not run on the development workstation or a personal remote
   host.
 - Windows UAC request integrity, cancellation, progress return, and mock Apply
-  are tested with mocks. Disposable-VM Apply/Verify/Rollback and installer
-  upgrade smoke remain outstanding candidate acceptance gates; no version label
-  by itself proves these passed.
+  are tested with mocks. One disposable Windows Server 2022 round accepted
+  live Apply/Verify/Rollback and installer upgrade/uninstall on 2026-09-15/16.
+  Windows 10/11 client behavior, real GUI/UAC click-through, WebView2-less
+  hosts, the unelevated Apply gate and the post-round uninstall exit-code fix
+  still require acceptance; see the dated record and STATUS.
 - Linux/macOS adapters are exercised by native CI and generated-command tests,
   not by changing a production host. Native CI is configured; its latest remote
   run was not checked as part of local verification.

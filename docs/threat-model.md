@@ -61,7 +61,9 @@ one-time or short-lived keys and revoke any key whose workflow was interrupted.
 - Local success cannot prove controller-side public-key authentication. Native
   installer/isolated-VM acceptance remains distinct from mocks and cross-builds.
 
-See [current audit evidence](audit-2026-09.md).
+See [the dated audit](records/audit-2026-09.md),
+[real-machine acceptance](records/acceptance-2026-09.md), and
+[STATUS](../STATUS.md) for the current validation baseline.
 
 ## Current out of scope
 

@@ -1,79 +1,64 @@
 # Roadmap
 
-## v0.2.0 — beginner MVP
+Current focus: finish the **v0.2.6 candidate** validation before expanding the
+product. Baseline: [STATUS.md](STATUS.md). Completed work belongs in
+[CHANGELOG.md](CHANGELOG.md), not in this backlog.
 
-- Chinese/English GUI and CLI guided paths.
-- Standard-user launch with scoped elevation.
-- Portable double-click packages and offline help.
-- Key-role onboarding, profile import/export, support redaction, update check.
-- Mock/CI safety coverage without changing a personal remote-access host.
+These are pending items and proposals, not claims of completed acceptance or
+an instruction to run system-changing tests on the development workstation.
 
-## v0.2.1 — first-run and upgrade reliability
+## P0 — next acceptance round
 
-- Fresh Windows targets without local public keys can enter the recommendation
-  step and switch languages without a stalled render.
-- Windows probes and managed actions no longer flash child-process consoles.
-- The per-user installer upgrades v0.2.0 in place and keeps one uninstall entry,
-  one install directory, and one shortcut set.
+Refresh the current candidate's local checks and native CI first, then use
+disposable targets with an independent recovery path. The recorded procedure
+and first-round findings are in
+[the acceptance report](docs/records/acceptance-2026-09.md#next-acceptance-round).
 
-## v0.2.2 — UAC result reliability
+- [ ] **Unelevated Windows Apply gate:** run from a real standard-user session
+  (or a deliberately filtered Administrator token); expect exit 4 and no
+  configuration, firewall, or service changes.
+- [ ] **Windows 10/11 client flow:** exercise official OpenSSH + Tailscale
+  setup with winget present, actual GUI/UAC confirmation and cancellation,
+  and a host without WebView2.
+- [ ] **Installer recheck:** verify missing-marker refusal returns exit 68;
+  record silent-uninstall leftovers and upgrade/uninstall behavior.
+- [ ] **Unix live acceptance:** Linux systemd + UFW, then firewalld, and macOS;
+  cover Apply / Verify / repeated Apply / Rollback, with explicit UFW raw-rule
+  limitations rather than an assumed complete inventory.
 
-- Elevated helper paths containing spaces remain a single Windows command-line
-  argument.
-- UAC cancellation is distinguished from helper launch and execution failure.
-- The per-user installer upgrades v0.2.1 in place.
+The full release procedure is maintained only in
+[the release checklist](docs/release-verification.md). Record test dates,
+commits, evidence, and any consciously deferred platform coverage before
+making a release decision.
 
-## v0.2.3 — full audit hardening
+## P1 — maintenance and known gaps
 
-- Safe phased Tailnet setup and an explicit LAN-only guided route.
-- Correct controller-key selection, validation, merge, target-user ownership,
-  and idempotent verification.
-- SSH configuration precedence, fail-closed authentication/firewall evidence,
-  exact CIDR matching, complete rollback, and truthful exit codes.
-- Confirmation bound to a canonical Plan digest; integrity-digested,
-  ownership-checked, idempotent rollback journals.
-- Hash-pinned staged offline execution, hardened bootstraps and offline-pack
-  builders, bounded uninstall, report redaction, and patched Go toolchain.
-- Shared GUI/CLI elevation protocol, safe privileged output handling, live-PID
-  concurrency locks, generated-command parser tests, and HTTPS-only downloads.
-- Tag-derived release notes and a modularized frontend with transport-aware
-  health counting.
+- [ ] **Go 1.26 migration:** align go.mod, local tools and CI; update x/crypto
+  to a release fixing the tracked channel-deadlock advisories and rerun
+  govulncheck plus regression tests. Review the unmaintained openpgp dependency
+  separately; see STATUS for the recorded advisory scope.
+- [ ] **Winget-less mixed dependency strategy:** design per-component download
+  selection so OpenSSH capability and a pinned offline Tailscale installer do
+  not require manually switching one global strategy.
+- [ ] **Interruption acceptance (optional stress round):** kill/power-loss
+  during Apply on disposable hosts; validate write-ahead journals and recovery
+  against real interruptions, beyond existing unit fixtures.
 
-## v0.2.4 — personal cards and unattended bootstrap
+## Candidate future features — not committed to a version
 
-- Export and import a compact personal card (controller public keys, SSH
-  port, display labels, network mode, and an optional Tailscale auth key) so
-  a new device can be onboarded without editing YAML.
-- `transport.authKey` enables one-pass unattended Tailnet bootstrap; the key
-  is kept out of plans, journals, exported profiles, and reports, and the
-  trade-offs are documented in the threat model.
-- Without a card or auth key, the phased sign-in flow is unchanged.
-
-## v0.2.5 — deep audit and task-based wizard
-
-- Rebuilt the desktop wizard around user tasks (check → review → finish;
-  repair mode: diagnose → repair → verify) instead of engine stages, with a
-  self-driving plan step, preselected controller keys, consequence-labelled
-  network exposure, concrete check-issue lists, and persistent error states.
-- Restrained the visual system (12px radii, solid surfaces, a single type
-  scale, solid accent buttons) and vendored Lucide icons.
-- Applied advanced settings live; rollback confirmation moved to an in-app
-  dialog.
-- Downgraded the rollback-journal digest mismatch to a warning and removed
-  the GUI's third pre-elevation Probe+Plan (authoritative digest check stays
-  inside Apply), following `docs/design-audit-2026-08.md`.
-
-## v0.3.0 candidates
-
-- Real-target validation in disposable VMs (Apply/Verify/Rollback, repeat
-  Apply, upgrade, uninstall) on Windows, Ubuntu, and macOS.
-- Controller-side real TCP, SSH handshake, authentication, identity, and host
-  fingerprint pairing assistant.
+- Controller-side connection assistant: real TCP/SSH handshake,
+  authentication, identity, and host-fingerprint pairing.
 - Automatic multi-component offline-pack selection.
 - Signed Windows artifacts when certificate infrastructure is available.
-
-## Later
-
-- Signed/notarized macOS desktop distribution.
-- Native Linux/macOS desktop installers.
+- Signed/notarized macOS desktop distribution and native Linux/macOS
+  desktop installers.
 - Managed update channels with explicit rollback.
+
+## Code organization follow-up — separate from release work
+
+The package boundaries are already meaningful; do not rename directories just
+for symmetry. If frontend behavior work warrants it, consider extracting the
+wizard state/event handling from `frontend/src/main.ts` (currently about 1,000
+lines) and splitting views by task, preserving bridge and browser tests. This
+is a refactoring candidate, not part of this documentation cleanup or a reason
+to rewrite the engine.

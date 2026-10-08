@@ -4,7 +4,7 @@
 
 > 当前源码为 v0.2.6 候选；可下载版本以 Release 为准。验证范围见 [STATUS](STATUS.md)。
 >
-> [早期 v0.2 界面参考](docs/images/v0.2-home-zh.png)仅作历史展示；现行交互见[前端优化记录](docs/ui-refinement-2026-09.md)。
+> 接手开发先看 [当前状态](STATUS.md)、[下一步](ROADMAP.md) 和[目录与开发说明](docs/development.md)。现行交互记录见[前端优化](docs/records/ui-refinement-2026-09.md)，早期截图已[归档](docs/90.Archive/01.2026-08-audits/ARCHIVE_NOTE.md)。
 
 ## Windows：下载后只做三步
 
@@ -54,7 +54,7 @@
 - Apply 会逐项说明“安装什么、打开哪个端口、谁能连接”后再确认。
 - 如果操作可能切断当前唯一 SSH/Tailscale 连接，默认阻止并给出本地执行、第二通道或延迟验证方案。
 - 重复运行先重新检查差异；失败后停止后续步骤，按执行记录尝试恢复可逆改动。恢复失败或旧后台任务需人工核查，不能承诺完整撤销。
-- UFW 自定义 raw rules 不在当前自动清单范围内；此类目标需要人工检查，详见[验证盲区](docs/audit-2026-09.md)。
+- UFW 自定义 raw rules 不在当前自动清单范围内；此类目标需要人工检查，详见[验证盲区](docs/records/audit-2026-09.md)。
 - 下载必须使用可信 HTTPS 来源并通过 SHA-256，不会关闭 TLS 校验。
 - 默认不收集遥测；导出的支持报告会脱敏主机名、IP、用户名路径、公钥注释和凭据样式字段。
 
@@ -104,9 +104,11 @@ open `Start SSH Launchpad.cmd`. The flow is Check → Ready to install → Finis
 ## 文档
 
 - [当前状态](STATUS.md)
+- [下一步与优先级](ROADMAP.md)
 - [完整文档导航](docs/README.md)
-- [九月审计与验证边界](docs/audit-2026-09.md)
-- [前端设计与交互记录](docs/ui-refinement-2026-09.md)
+- [九月审计与验证边界](docs/records/audit-2026-09.md)
+- [真机验收记录](docs/records/acceptance-2026-09.md)
+- [前端设计与交互记录](docs/records/ui-refinement-2026-09.md)
 - [版本变化](CHANGELOG.md)
 - [平台支持与验证边界](docs/platform-support.md)
 - [架构](docs/architecture.md)
