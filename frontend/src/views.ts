@@ -10,7 +10,7 @@ import type { ElevatedJob, PlanAction, Profile, PublicKeyInfo, Report, Snapshot 
 
 export type WizardMode = "setup" | "repair";
 export type InstallState = "idle" | "waiting-for-permission" | "running" | "failed" | "cancelled" | "completed";
-type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
+export type Translate = (key: MessageKey, values?: Record<string, string | number>) => string;
 
 export interface ViewState {
   language: Language;
@@ -180,7 +180,7 @@ function renderPrepareStep(state: ViewState, t: Translate): string {
   const blockers = plan?.blockers ?? [];
   const selected = state.selectedKey?.publicKey ?? state.profile.ssh.publicKeys[0] ?? "";
   const keyNeeded = state.mode === "setup"
-    || Boolean(plan && (plan.actions.some((action) => action.operation === "configure_keys") || blockers.some((blocker) => /public key/i.test(blocker))));
+    || Boolean(plan && ((plan.actions ?? []).some((action) => action.operation === "configure_keys") || blockers.some((blocker) => /public key/i.test(blocker))));
   const keyReady = !keyNeeded || Boolean(selected);
   return `
     ${state.profile.labels.cardDisplayName ? cardLoadedNote(state, t) : ""}
@@ -320,7 +320,7 @@ function renderKeyPicker(state: ViewState, t: Translate, selected: string): stri
 }
 
 function renderChangeList(state: ViewState, t: Translate, plan: NonNullable<Report["plan"]>): string {
-  const actions = plan.actions;
+  const actions = plan.actions ?? [];
   const selfCut = actions.some((action) => action.selfCutRisk);
   if (actions.length === 0 && !selfCut) return "";
   return `
@@ -388,7 +388,7 @@ function renderFinishStep(state: ViewState, t: Translate): string {
   }
   const report = state.verifyReport;
   const snapshot = report?.snapshot;
-  const remaining = (report?.plan?.actions.length ?? 0) + (report?.plan?.blockers?.length ?? 0) || (report?.success ? 0 : 1);
+  const remaining = (report?.plan?.actions?.length ?? 0) + (report?.plan?.blockers?.length ?? 0) || (report?.success ? 0 : 1);
   const ready = Boolean(report?.success && remaining === 0);
   const address = state.profile.transport.mode === "tailnet" ? snapshot?.tailscale.ip : snapshot?.network.lanIps?.[0];
   const host = address || snapshot?.hostname || "HOST";

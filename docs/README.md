@@ -36,6 +36,7 @@
 - [2026-09-13 安全修复与验证](records/audit-2026-09.md)
 - [2026-09-13 前端设计与浏览器验证](records/ui-refinement-2026-09.md)
 - [2026-09-15/16 真机验收](records/acceptance-2026-09.md)
+- [2026-10-08/09 代码收敛、安全升级与本地回归](records/code-consolidation-2026-10-09.md)
 
 ## 已被替代的材料：`90.Archive/`
 

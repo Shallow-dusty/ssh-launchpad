@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,22 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
-	"strconv"
-	"strings"
 
 	elevationprotocol "github.com/Shallow-dusty/ssh-launchpad/internal/elevation"
 	"github.com/Shallow-dusty/ssh-launchpad/internal/launchpad"
-)
-
-type language string
-
-const (
-	langAuto language = "auto"
-	langZH   language = "zh-CN"
-	langEN   language = "en"
 )
 
 type globalOptions struct {
@@ -33,8 +19,6 @@ type globalOptions struct {
 	nonInteractive bool
 	jsonOnly       bool
 }
-
-var currentLanguage = langEN
 
 func main() {
 	os.Exit(runWithTerminal(os.Args[1:]))
@@ -192,259 +176,24 @@ func executeStage(stage launchpad.Stage, profile launchpad.Profile, options laun
 		}
 	})
 	ctx := context.Background()
+	var report launchpad.Report
+	var stageErr error
 	switch stage {
 	case launchpad.StageCheck:
-		return engine.Check(ctx, profile)
+		report, stageErr = engine.Check(ctx, profile)
 	case launchpad.StagePlan:
-		return engine.Plan(ctx, profile)
+		report, stageErr = engine.Plan(ctx, profile)
 	case launchpad.StageApply:
-		return engine.Apply(ctx, profile, options)
+		report, stageErr = engine.Apply(ctx, profile, options)
 	case launchpad.StageVerify:
-		return engine.Verify(ctx, profile)
+		report, stageErr = engine.Verify(ctx, profile)
 	default:
 		return launchpad.Report{}, errors.New("unsupported stage")
 	}
-}
-
-func runWizard(options globalOptions) int {
-	lock, err := acquireProcessLock()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, tr("alreadyRunning"))
-		return launchpad.ExitConfirmationRequired
+	if stageErr != nil && report.Error != "" {
+		stageErr = &reportError{report: report, cause: stageErr}
 	}
-	defer lock()
-	reader := bufio.NewReader(os.Stdin)
-	fmt.Printf("\n%s\n%s\n\n", tr("welcome"), tr("chooseTask"))
-	fmt.Printf("  1. %s\n  2. %s\n  3. %s\n\n", tr("setupTask"), tr("repairTask"), tr("checkTask"))
-	choice := prompt(reader, tr("choicePrompt"), "1")
-	if choice != "1" && choice != "2" && choice != "3" {
-		fmt.Fprintln(os.Stderr, tr("invalidChoice"))
-		return finishWizard(reader, launchpad.ExitInvalidProfile)
-	}
-	profile := launchpad.DefaultProfile()
-	profile.Name = "guided"
-	fmt.Printf("\n%s\n", tr("checking"))
-	checkReport, checkErr := executeStage(launchpad.StageCheck, profile, launchpad.ApplyOptions{}, false)
-	printSimpleCheck(checkReport)
-	if checkErr != nil && checkReport.Snapshot == nil {
-		fmt.Fprintln(os.Stderr, friendlyError(checkErr))
-		return finishWizard(reader, checkReport.ExitCode)
-	}
-	if checkReport.Snapshot != nil {
-		profile.Transport.Install = !checkReport.Snapshot.Tailscale.Installed
-	}
-	if choice == "3" {
-		return finishWizard(reader, checkReport.ExitCode)
-	}
-
-	if err := configureControllerKey(reader, &profile); err != nil {
-		fmt.Fprintln(os.Stderr, friendlyError(err))
-		return finishWizard(reader, launchpad.ExitInvalidProfile)
-	}
-	fmt.Printf("\n%s\n%s\n", tr("recommendTitle"), tr("recommendTailnet"))
-	planReport, planErr := executeStage(launchpad.StagePlan, profile, launchpad.ApplyOptions{}, false)
-	if planErr != nil {
-		fmt.Fprintln(os.Stderr, friendlyError(planErr))
-		return finishWizard(reader, planReport.ExitCode)
-	}
-	if planReport.Plan != nil && planReport.Plan.NoChanges {
-		fmt.Printf("\n%s %s\n", glyph("[OK]", "✓"), tr("alreadyReady"))
-		verify, _ := executeStage(launchpad.StageVerify, profile, launchpad.ApplyOptions{}, false)
-		printVerifyNextSteps(verify, profile)
-		return finishWizard(reader, verify.ExitCode)
-	}
-	printPlainPlan(planReport)
-	if planReport.Plan != nil && len(planReport.Plan.Blockers) > 0 {
-		for _, blocker := range planReport.Plan.Blockers {
-			fmt.Fprintf(os.Stderr, "! %s\n", blocker)
-		}
-		return finishWizard(reader, launchpad.ExitVerificationFailed)
-	}
-	if planReport.Plan != nil && planReport.Plan.SelfCutDetected {
-		fmt.Printf("\n! %s\n", tr("selfCutBlocked"))
-		return finishWizard(reader, launchpad.ExitSelfCutBlocked)
-	}
-	if !strings.EqualFold(prompt(reader, tr("applyPrompt"), tr("no")), tr("yes")) {
-		fmt.Printf("\n%s\n", tr("noChanges"))
-		return finishWizard(reader, launchpad.ExitOK)
-	}
-
-	applyOptions := launchpad.ApplyOptions{
-		Confirmed:          true,
-		ExpectedPlanDigest: planReport.Plan.Digest,
-		AutoRollback:       profile.Safety.AutoRollback,
-	}
-	apply, applyErr := executeStage(launchpad.StageApply, profile, applyOptions, true)
-	code := apply.ExitCode
-	if code == launchpad.ExitNeedsElevation {
-		fmt.Printf("\n%s\n", tr("permissionPrompt"))
-		if !strings.EqualFold(prompt(reader, tr("continuePrompt"), tr("yes")), tr("yes")) {
-			fmt.Printf("%s\n", tr("permissionCancelled"))
-			return finishWizard(reader, launchpad.ExitNeedsElevation)
-		}
-		_, code, applyErr = elevateAndApply(profile, applyOptions, currentLanguage)
-	}
-	if applyErr != nil || code != launchpad.ExitOK {
-		fmt.Fprintf(os.Stderr, "\n%s\n", friendlyError(applyErr))
-		return finishWizard(reader, code)
-	}
-	verify, verifyErr := executeStage(launchpad.StageVerify, profile, launchpad.ApplyOptions{}, false)
-	printVerifyNextSteps(verify, profile)
-	if verifyErr != nil {
-		fmt.Fprintln(os.Stderr, friendlyError(verifyErr))
-	}
-	return finishWizard(reader, verify.ExitCode)
-}
-
-func configureControllerKey(reader *bufio.Reader, profile *launchpad.Profile) error {
-	keys := discoverPublicKeys()
-	fmt.Printf("\n%s\n%s\n", tr("keyTitle"), tr("keyExplain"))
-	if len(keys) > 0 {
-		fmt.Printf("%s %s\n", glyph("[OK]", "✓"), tr("foundKey", len(keys)))
-		for index, key := range keys {
-			fmt.Printf("  %d. %s\n", index+1, key.label)
-		}
-		fmt.Printf("  %d. %s\n  %d. %s\n", len(keys)+1, tr("pasteKey"), len(keys)+2, tr("generateKey"))
-		choiceText := prompt(reader, tr("choicePrompt"), "")
-		choice, parseErr := strconv.Atoi(choiceText)
-		if parseErr != nil || choice < 1 || choice > len(keys)+2 {
-			return errors.New(tr("invalidChoice"))
-		}
-		if choice <= len(keys) {
-			profile.SSH.PublicKeys = []string{keys[choice-1].value}
-			return nil
-		}
-		if choice == len(keys)+2 {
-			publicKey, err := generatePublicKey()
-			if err != nil {
-				return err
-			}
-			profile.SSH.PublicKeys = []string{publicKey}
-			fmt.Printf("%s %s\n", glyph("[OK]", "✓"), tr("generatedKey"))
-			return nil
-		}
-	}
-	if len(keys) == 0 {
-		fmt.Printf("%s\n", tr("noKey"))
-		fmt.Printf("  1. %s\n  2. %s\n", tr("pasteKey"), tr("generateKey"))
-	}
-	choice := "1"
-	if len(keys) == 0 {
-		choice = prompt(reader, tr("choicePrompt"), "1")
-	}
-	if choice == "2" {
-		publicKey, err := generatePublicKey()
-		if err != nil {
-			return err
-		}
-		profile.SSH.PublicKeys = []string{publicKey}
-		fmt.Printf("%s %s\n", glyph("[OK]", "✓"), tr("generatedKey"))
-		return nil
-	}
-	value := prompt(reader, tr("pastePrompt"), "")
-	if err := launchpad.ValidatePublicKey(value); err != nil {
-		return errors.New(tr("publicOnly"))
-	}
-	profile.SSH.PublicKeys = []string{strings.TrimSpace(value)}
-	return nil
-}
-
-type discoveredPublicKey struct {
-	label string
-	value string
-}
-
-func discoverPublicKeys() []discoveredPublicKey {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil
-	}
-	paths, _ := filepath.Glob(filepath.Join(home, ".ssh", "*.pub"))
-	var keys []discoveredPublicKey
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
-		if err == nil && launchpad.ValidatePublicKey(string(data)) == nil {
-			keys = append(keys, discoveredPublicKey{label: filepath.Base(path), value: strings.TrimSpace(string(data))})
-		}
-	}
-	return keys
-}
-
-func generatePublicKey() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	directory := filepath.Join(home, ".ssh")
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return "", err
-	}
-	path := filepath.Join(directory, launchpad.ControllerKeyBaseName)
-	if _, err := os.Stat(path); err == nil {
-		return "", errors.New(tr("privateExists"))
-	}
-	cmd := exec.Command("ssh-keygen", "-t", "ed25519", "-f", path, "-N", "", "-C", "ssh-launchpad-controller")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("%s: %s", tr("keygenFailed"), strings.TrimSpace(string(output)))
-	}
-	data, err := os.ReadFile(path + ".pub")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(data)), launchpad.ValidatePublicKey(string(data))
-}
-
-func printSimpleCheck(report launchpad.Report) {
-	if report.Snapshot == nil {
-		fmt.Printf("%s %s\n", glyph("[X]", "✗"), tr("checkFailed"))
-		return
-	}
-	s := report.Snapshot
-	missing := 0
-	if !s.SSHServer.Installed {
-		missing++
-	}
-	if !s.SSHService.Running {
-		missing++
-	}
-	if missing == 0 {
-		fmt.Printf("%s %s\n", glyph("[OK]", "✓"), tr("ready"))
-	} else {
-		fmt.Printf("! %s\n", tr("missingSteps", missing))
-	}
-	fmt.Printf("  %s: %s\n  OpenSSH: %s\n  Tailscale: %s\n", tr("computer"), s.Hostname, yesNo(s.SSHServer.Installed), yesNo(s.Tailscale.Online))
-}
-
-func printPlainPlan(report launchpad.Report) {
-	if report.Plan == nil {
-		return
-	}
-	fmt.Printf("\n%s\n", tr("willChange"))
-	for _, action := range report.Plan.Actions {
-		fmt.Printf("  %s %s\n", glyph("*", "•"), humanAction(action))
-	}
-	fmt.Printf("  %s %s\n", glyph("*", "•"), tr("whoCanConnect"))
-}
-
-func printVerifyNextSteps(report launchpad.Report, profile launchpad.Profile) {
-	if report.Success {
-		fmt.Printf("\n%s %s\n", glyph("[OK]", "✓"), tr("ready"))
-	} else {
-		fmt.Printf("\n! %s\n", tr("verifyNeedsOtherDevice"))
-	}
-	host := "this-computer"
-	if report.Snapshot != nil && report.Snapshot.Hostname != "" {
-		host = report.Snapshot.Hostname
-	}
-	fmt.Printf("%s\n  ssh -p %d <username>@%s\n%s\n", tr("copyCommand"), profile.SSH.Port, host, tr("fingerprintWarning"))
-}
-
-func finishWizard(reader *bufio.Reader, code int) int {
-	if isInteractiveTerminal() && os.Getenv("SSH_LAUNCHPAD_LAUNCHER") == "" {
-		fmt.Printf("\n%s", tr("pressEnter"))
-		_, _ = reader.ReadString('\n')
-	}
-	return code
+	return report, stageErr
 }
 
 func runElevatedApply(args []string) int {
@@ -501,170 +250,8 @@ func runRollback(args []string, options globalOptions) int {
 	return report.ExitCode
 }
 
-func writeReport(path string, report launchpad.Report) error {
-	data, err := json.MarshalIndent(report, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	if path == "" || path == "-" {
-		_, err = os.Stdout.Write(data)
-		return err
-	}
-	parent := filepath.Dir(path)
-	if parent != "." {
-		// #nosec G301 G703 -- --output intentionally allows the caller to select a report directory.
-		if err := os.MkdirAll(parent, 0o755); err != nil {
-			return err
-		}
-	}
-	// #nosec G703 -- --output is an explicit caller-selected destination, not an archive member or server-controlled path.
-	return os.WriteFile(path, data, 0o600)
-}
-
-func prompt(reader *bufio.Reader, label, fallback string) string {
-	if fallback != "" {
-		fmt.Printf("%s [%s]: ", label, fallback)
-	} else {
-		fmt.Printf("%s: ", label)
-	}
-	value, _ := reader.ReadString('\n')
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
-func resolveLanguage(requested language) language {
-	if requested == langAuto {
-		if env := os.Getenv("SSH_LAUNCHPAD_LANG"); env != "" {
-			requested = language(env)
-		}
-	}
-	if requested == langAuto {
-		if saved := savedLanguage(); saved != langAuto {
-			requested = saved
-		}
-	}
-	if requested == langAuto {
-		if runtime.GOOS != "windows" {
-			locale := strings.ToLower(os.Getenv("LC_ALL") + " " + os.Getenv("LANG"))
-			if locale != " " && !strings.Contains(locale, "utf-8") && !strings.Contains(locale, "utf8") {
-				return langEN
-			}
-			if strings.Contains(locale, "zh") {
-				return langZH
-			}
-		}
-		if strings.HasPrefix(strings.ToLower(os.Getenv("LANG")), "zh") {
-			return langZH
-		}
-		return systemLanguage()
-	}
-	return requested
-}
-
-func persistLanguage(value language) error {
-	directory, err := os.UserConfigDir()
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(directory, "SSH Launchpad", "language")
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(value+"\n"), 0o600)
-}
-
-func savedLanguage() language {
-	directory, err := os.UserConfigDir()
-	if err != nil {
-		return langAuto
-	}
-	data, err := os.ReadFile(filepath.Join(directory, "SSH Launchpad", "language"))
-	if err != nil {
-		return langAuto
-	}
-	value := language(strings.TrimSpace(string(data)))
-	if value == langZH || value == langEN {
-		return value
-	}
-	return langAuto
-}
-
-func glyph(ascii, unicode string) string {
-	if runtime.GOOS != "windows" {
-		locale := strings.ToLower(os.Getenv("LC_ALL") + " " + os.Getenv("LANG"))
-		if locale != " " && !strings.Contains(locale, "utf-8") && !strings.Contains(locale, "utf8") {
-			return ascii
-		}
-	}
-	return unicode
-}
-
 func isInteractiveTerminal() bool {
 	in, inErr := os.Stdin.Stat()
 	out, outErr := os.Stdout.Stat()
 	return inErr == nil && outErr == nil && in.Mode()&os.ModeCharDevice != 0 && out.Mode()&os.ModeCharDevice != 0 && os.Getenv("CI") == ""
-}
-
-func friendlyError(err error) string {
-	if err == nil {
-		return tr("operationFailed")
-	}
-	text := err.Error()
-	switch {
-	case strings.Contains(strings.ToLower(text), "checksum"):
-		return tr("checksumFailed")
-	case strings.Contains(strings.ToLower(text), "network"), strings.Contains(strings.ToLower(text), "timeout"):
-		return tr("networkFailed")
-	case strings.Contains(strings.ToLower(text), "private key"):
-		return tr("publicOnly")
-	default:
-		return text
-	}
-}
-
-func yesNo(value bool) string {
-	if value {
-		return tr("yes")
-	}
-	return tr("no")
-}
-
-func humanAction(action launchpad.Action) string {
-	switch action.Operation {
-	case "install_ssh":
-		return tr("installSSH")
-	case "configure_sshd":
-		return tr("configureSSH")
-	case "configure_keys":
-		return tr("configureKeys")
-	case "enable_sshd":
-		return tr("enableSSH")
-	case "configure_firewall":
-		return tr("configureFirewall", action.Params["port"])
-	case "install_tailscale":
-		return tr("installTailscale")
-	default:
-		return tr("systemChange")
-	}
-}
-
-func localEvent(event launchpad.Event) string {
-	switch event.Kind {
-	case "started":
-		return tr("working")
-	case "completed":
-		return tr("completed")
-	case "rollback":
-		return tr("rollingBack")
-	default:
-		return event.Message
-	}
-}
-
-func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, tr("usage"))
 }

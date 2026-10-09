@@ -4,6 +4,27 @@ All notable changes are documented here.
 
 ## [0.2.6] - 2026-09-05
 
+### Code consolidation and security refresh (2026-10-08/09, candidate)
+
+- Split frontend composition, backend I/O, wizard, transfers, advanced controls
+  and feedback; split desktop/CLI Go and engine probe/action/journal files
+  within their existing packages.
+- Derive frontend wire models, App signatures and profile defaults from Go,
+  normalize nullable input and render null no-op action lists safely.
+- Add optional report `reasonCode` metadata without changing schema v1 or
+  exit codes; retain Wails failure reports and use their reasons in GUI/CLI
+  instead of guessing from error prose.
+- Share quick/full/release check profiles between local development and CI,
+  with one scanner-pin source, automatic documentation checks and non-root
+  Pester reports. Packaging/publication and real-host acceptance remain separate.
+- Update transitive `source-map-js` from 1.2.1 to compatible 1.2.2 for
+  GHSA-68fv-2mgg-jv7q; no frontend framework migration.
+- Following the refreshed security scan, require Go 1.26.9 and update x/crypto
+  to v0.56.0. CI derives its SDK from the same patch-level go.mod minimum.
+- Normalize offline-pack filesystem paths before .NET access and containment
+  checks, including provider-qualified UNC paths and unresolved parent segments;
+  traversal/rooted payload paths remain rejected.
+
 ### Field acceptance fixes (2026-09-15/16)
 
 First real-machine round on a disposable Windows Server 2022 host; ten defects

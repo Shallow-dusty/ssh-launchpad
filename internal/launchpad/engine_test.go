@@ -28,7 +28,7 @@ func TestVerifyFailsClosedOnInvalidSSHOrFirewallEvidence(t *testing.T) {
 	engine := NewEngine(nil)
 	engine.Probe = &sequenceProbe{snapshots: []Snapshot{snapshot}}
 	report, err := engine.Verify(context.Background(), profile)
-	if err == nil || report.Success || report.ExitCode != ExitVerificationFailed {
+	if err == nil || report.Success || report.ExitCode != ExitVerificationFailed || report.ReasonCode != ReasonVerificationFailed {
 		t.Fatalf("Verify accepted unsafe evidence: %+v %v", report, err)
 	}
 }

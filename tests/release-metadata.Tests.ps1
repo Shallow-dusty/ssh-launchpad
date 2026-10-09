@@ -5,6 +5,7 @@ Describe 'Release metadata contract' {
         $script:Root = Split-Path -Parent $PSScriptRoot
         $script:WorkflowPath = Join-Path $script:Root '.github\workflows\release.yml'
         $script:Workflow = Get-Content -LiteralPath $script:WorkflowPath -Raw
+        $script:Checks = Get-Content -LiteralPath (Join-Path $script:Root 'scripts\check.mjs') -Raw
     }
 
     It 'resolves release notes from the pushed tag' {
@@ -30,17 +31,22 @@ Describe 'Release metadata contract' {
     }
 
     It 'runs the documented release security and concurrency gates' {
-        foreach ($gate in @('go test -p 1 -race ./...', 'staticcheck', 'govulncheck', 'gosec', 'pnpm audit')) {
-            $script:Workflow | Should -Match ([regex]::Escape($gate))
+        foreach ($group in @('go', 'race', 'docs', 'scripts', 'security', 'ui')) {
+            $script:Workflow | Should -Match ([regex]::Escape("node scripts/check.mjs $group"))
+        }
+        foreach ($gate in @('"-race"', 'staticcheck@v0.7.0', 'govulncheck@v1.6.0', 'gosec@v2.28.0', '"audit"')) {
+            $script:Checks | Should -Match ([regex]::Escape($gate))
         }
     }
 
     It 'pins the same govulncheck version in CI and release' {
         $ci = Get-Content -LiteralPath (Join-Path $script:Root '.github\workflows\ci.yml') -Raw
         $pin = 'golang.org/x/vuln/cmd/govulncheck@v1.6.0'
-        foreach ($workflow in @($ci, $script:Workflow)) {
-            $workflow | Should -Match ([regex]::Escape($pin))
-            $workflow | Should -Not -Match 'govulncheck@latest'
+        $ci | Should -Match 'node scripts/check\.mjs vuln'
+        $script:Workflow | Should -Match 'node scripts/check\.mjs security'
+        $script:Checks | Should -Match ([regex]::Escape($pin))
+        foreach ($source in @($ci, $script:Workflow, $script:Checks)) {
+            $source | Should -Not -Match 'govulncheck@latest'
         }
     }
 

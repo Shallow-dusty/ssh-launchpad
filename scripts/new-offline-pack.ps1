@@ -7,8 +7,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$source = (Resolve-Path -LiteralPath $InputDirectory).Path
-$metadataPath = (Resolve-Path -LiteralPath $Metadata).Path
+# .NET file APIs need filesystem paths, not PowerShell provider-qualified UNC paths.
+$source = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $InputDirectory).ProviderPath)
+$metadataPath = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $Metadata).ProviderPath)
 $outputPath = [IO.Path]::GetFullPath($Output)
 $outputParent = Split-Path -Parent $outputPath
 New-Item -ItemType Directory -Path $outputParent -Force | Out-Null
@@ -46,8 +47,8 @@ try {
             throw "Component file must stay inside InputDirectory: $($component.file)"
         }
         $candidate = [IO.Path]::GetFullPath((Join-Path $source $component.file))
-        if (-not $candidate.StartsWith($source + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
-            throw "Component file escapes InputDirectory: $($component.file)"
+        if (-not $candidate.StartsWith($source.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Component file escapes InputDirectory: $($component.file) (root: $source; resolved: $candidate)"
         }
         if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
             throw "Payload missing: $($component.file)"

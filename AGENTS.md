@@ -18,6 +18,11 @@ contracts, not process theater.
 ## Development
 
 - Read `STATUS.md` and the relevant `docs/` file before editing.
+- Use `node scripts/check.mjs quick|full|release` (or a named group) for shared
+  local/CI gates. Scanner pins belong only in that runner.
+- Wire models, App signatures and defaults come from Go via
+  `scripts/internal/bridge-types`; generate `build/contracts/wire-types.ts`
+  before frontend checks, never add a hand-maintained duplicate.
 - Keep platform commands behind the planner/executor interfaces; the UI never
   assembles shell commands or decides safety policy.
 - When changing planner output, Apply, rollback, or download verification, add

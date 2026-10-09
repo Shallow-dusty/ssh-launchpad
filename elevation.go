@@ -19,9 +19,19 @@ import (
 	"github.com/Shallow-dusty/ssh-launchpad/internal/launchpad"
 )
 
+type JobState string
+
+const (
+	JobWaitingForPermission JobState = "waiting-for-permission"
+	JobRunning              JobState = "running"
+	JobCompleted            JobState = "completed"
+	JobFailed               JobState = "failed"
+	JobCancelled            JobState = "cancelled"
+)
+
 type ElevatedJob struct {
 	ID     string            `json:"id"`
-	State  string            `json:"state"`
+	State  JobState          `json:"state"`
 	Report *launchpad.Report `json:"report,omitempty"`
 	Error  string            `json:"error,omitempty"`
 	Events []launchpad.Event `json:"events,omitempty"`

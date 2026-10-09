@@ -54,7 +54,7 @@ func executeElevatedRequest(profile launchpad.Profile, options launchpad.ApplyOp
 	}
 	if err != nil || !report.Success {
 		if report.Error != "" {
-			return false, report.ExitCode, errors.New(report.Error)
+			return false, report.ExitCode, &reportError{report: report, cause: err}
 		}
 		return false, report.ExitCode, err
 	}

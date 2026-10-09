@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -48,12 +47,14 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 	report.Plan = &plan
 	if !opts.Confirmed {
 		report.ExitCode = ExitConfirmationRequired
+		report.ReasonCode = ReasonConfirmationRequired
 		report.Error = "Apply requires explicit confirmation."
 		report.Finished = time.Now().UTC()
 		return report, errors.New(report.Error)
 	}
 	if len(plan.Blockers) > 0 {
 		report.ExitCode = ExitVerificationFailed
+		report.ReasonCode = ReasonVerificationFailed
 		report.Error = "Apply is blocked: " + strings.Join(plan.Blockers, " ")
 		report.Finished = time.Now().UTC()
 		return report, errors.New(report.Error)
@@ -67,6 +68,7 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 	for _, action := range plan.Actions {
 		if !action.Mutating || len(action.Command) == 0 {
 			report.ExitCode = ExitUnsupported
+			report.ReasonCode = ReasonUnsupported
 			report.Error = "The plan contains a manual or unsupported action and cannot be reported as successfully applied: " + action.ID
 			report.Finished = time.Now().UTC()
 			return report, errors.New(report.Error)
@@ -74,6 +76,7 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 	}
 	if plan.SelfCutDetected && profile.Safety.PreventSelfCut && !opts.AllowSelfCut && !opts.ScheduleRisky {
 		report.ExitCode = ExitSelfCutBlocked
+		report.ReasonCode = ReasonSelfCutBlocked
 		report.Error = "Self-cut risk detected: use a second control channel, --schedule-risky, or explicitly allow the risk."
 		report.Finished = time.Now().UTC()
 		return report, errors.New(report.Error)
@@ -81,6 +84,7 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 	if plan.SelfCutDetected {
 		if err := preflightExternalVerify(opts.ExternalVerify); err != nil {
 			report.ExitCode = ExitSelfCutBlocked
+			report.ReasonCode = ReasonSelfCutBlocked
 			report.Error = "Self-cut-sensitive work requires a reachable independent --external-verify-target: " + err.Error()
 			report.Finished = time.Now().UTC()
 			return report, errors.New(report.Error)
@@ -93,12 +97,14 @@ func (e Executor) Apply(ctx context.Context, profile Profile, plan Plan, opts Ap
 	}
 	if containsElevated(plan.Actions) && !adminCheck(ctx, plan.Platform) {
 		report.ExitCode = ExitNeedsElevation
+		report.ReasonCode = ReasonElevationRequired
 		report.Error = "The plan contains elevated actions. Re-run Apply from an administrator/root session."
 		report.Finished = time.Now().UTC()
 		return report, errors.New(report.Error)
 	}
 	ctx, release, lockErr := mutationContext(ctx)
 	if lockErr != nil {
+		report.ReasonCode = ReasonMutationBusy
 		return finishReportError(report, ExitConfirmationRequired, lockErr)
 	}
 	defer release()
@@ -240,6 +246,7 @@ func (e Executor) RollbackVerified(ctx context.Context, journalPath, expectedDig
 	report.JournalPath = journalPath
 	ctx, release, lockErr := mutationContext(ctx)
 	if lockErr != nil {
+		report.ReasonCode = ReasonMutationBusy
 		return finishReportError(report, ExitConfirmationRequired, lockErr)
 	}
 	defer release()
@@ -320,9 +327,11 @@ func (e Executor) RollbackVerified(ctx context.Context, journalPath, expectedDig
 func (e Executor) failAndRollback(ctx context.Context, profile Profile, report Report, journal Journal, journalPath string, completed []Action, opts ApplyOptions, cause error) (Report, error) {
 	report.Success = false
 	report.ExitCode = ExitPartialFailure
+	report.ReasonCode = ReasonExecutionFailed
 	var artifactErr *artifactVerificationError
 	if errors.As(cause, &artifactErr) {
 		report.ExitCode = ExitDownloadFailure
+		report.ReasonCode = ReasonDownloadFailed
 	}
 	report.Error = cause.Error()
 	if opts.AutoRollback || profile.Safety.AutoRollback {
@@ -518,97 +527,12 @@ func stageVerifiedActionArtifact(action Action, command []string, journalDir, re
 	return stagedCommand, cleanup, nil
 }
 
-// readJournal loads a rollback journal. A digest mismatch is reported as a
-// warning rather than a hard failure: the digest is self-computed, so it can
-// only flag accidental corruption, and a recovery path must not refuse to
-// recover over a checksum it could recompute itself.
-func readJournal(path string, expectedDigest ...string) (Journal, []string, error) {
-	file, err := openJournalRead(path)
-	if err != nil {
-		return Journal{}, nil, err
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return Journal{}, nil, err
-	}
-	const maxJournalBytes = 8 * 1024 * 1024
-	if info.Size() > maxJournalBytes {
-		return Journal{}, nil, errors.New("rollback journal exceeds the size limit")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, maxJournalBytes+1))
-	if err != nil {
-		return Journal{}, nil, err
-	}
-	if len(data) > maxJournalBytes {
-		return Journal{}, nil, errors.New("rollback journal exceeds the size limit")
-	}
-	if len(expectedDigest) > 0 && expectedDigest[0] != "" {
-		sum := sha256.Sum256(data)
-		if !strings.EqualFold(hex.EncodeToString(sum[:]), expectedDigest[0]) {
-			return Journal{}, nil, errors.New("rollback journal changed after confirmation")
-		}
-	}
-	var journal Journal
-	if err := json.Unmarshal(data, &journal); err != nil {
-		return Journal{}, nil, err
-	}
-	if journal.SchemaVersion != SchemaVersion {
-		return Journal{}, nil, fmt.Errorf("unsupported journal schema %d", journal.SchemaVersion)
-	}
-	if strings.TrimSpace(journal.ID) == "" || len(journal.Actions) > 256 {
-		return Journal{}, nil, errors.New("rollback journal has invalid identity or action count")
-	}
-	var warnings []string
-	if journal.Digest != "" && !strings.EqualFold(journal.Digest, journalDigest(journal)) {
-		warnings = append(warnings, "The rollback journal digest does not match its contents; continuing with best-effort recovery from the recorded actions.")
-	}
-	return journal, warnings, nil
-}
-
-func journalDigest(journal Journal) string {
-	journal.Digest = ""
-	data, err := json.Marshal(journal)
-	if err != nil {
-		panic(err)
-	}
-	digest := sha256.Sum256(data)
-	return hex.EncodeToString(digest[:])
-}
-
-func writeJournalAtomic(path string, journal *Journal) error {
-	journal.Digest = journalDigest(*journal)
-	data, err := json.MarshalIndent(journal, "", "  ")
-	if err != nil {
-		return err
-	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".journal-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmp := file.Name()
-	defer os.Remove(tmp)
-	if err := file.Chmod(0o600); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if _, err := file.Write(append(data, '\n')); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
 func finishReportError(report Report, code int, err error) (Report, error) {
 	report.Success = false
 	report.ExitCode = code
+	if report.ReasonCode == "" {
+		report.ReasonCode = failureReason(report.Stage, code)
+	}
 	report.Error = err.Error()
 	report.Finished = time.Now().UTC()
 	return report, err

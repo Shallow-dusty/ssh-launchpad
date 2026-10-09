@@ -17,7 +17,12 @@ export default defineConfig(({ mode }) => {
     }],
     server: {
       port: 34115,
-      strictPort: true
+      strictPort: true,
+      fs: {
+        // Generated contracts/defaults are the only sibling build inputs.
+        // Do not expose raw audit logs or the whole repository to the server.
+        allow: [".", "../build/contracts"]
+      }
     },
     build: {
       target: "es2022",

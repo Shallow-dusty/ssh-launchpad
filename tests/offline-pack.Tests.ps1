@@ -2,7 +2,7 @@
 
 Describe 'Offline dependency pack' {
     It 'records source, license, redistribution and SHA-256 without bundling implicit files' {
-        $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+        $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).ProviderPath
         $temp = Join-Path $root ('build/test-tmp/ssh-launchpad-pack-test-' + [guid]::NewGuid().ToString('N'))
         try {
             $payload = Join-Path $temp 'payload'
@@ -54,7 +54,7 @@ Describe 'Offline dependency pack' {
     }
 
     It 'works from a packaged directory with adjacent renamed help files' {
-        $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+        $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).ProviderPath
         $temp = Join-Path $root ('build/test-tmp/ssh-launchpad-packaged-script-' + [guid]::NewGuid().ToString('N'))
         try {
             $payload = Join-Path $temp 'payload'
@@ -81,6 +81,37 @@ Describe 'Offline dependency pack' {
         finally {
             [GC]::Collect()
             [GC]::WaitForPendingFinalizers()
+            if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
+        }
+    }
+
+    It 'rejects an escaping or rooted payload path: <File>' -TestCases @(
+        @{ File = '../outside.bin' },
+        @{ File = '..\outside.bin' },
+        @{ File = 'C:\outside.bin' }
+    ) {
+        param($File)
+        $root = [IO.Path]::GetFullPath((Resolve-Path (Join-Path $PSScriptRoot '..')).ProviderPath)
+        $temp = Join-Path $root ('build/test-tmp/ssh-launchpad-pack-boundary-' + [guid]::NewGuid().ToString('N'))
+        try {
+            $payload = Join-Path $temp 'payload'
+            New-Item -ItemType Directory -Path $payload -Force | Out-Null
+            $metadataPath = Join-Path $temp 'metadata.json'
+            @{
+                schemaVersion = 1
+                components = @(@{
+                    file = $File
+                    sourceUrl = 'https://example.invalid/outside.bin'
+                    license = 'test-only'
+                    redistributionAllowed = $false
+                })
+            } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $metadataPath -Encoding utf8
+            $output = Join-Path $temp 'pack.zip'
+            { & (Join-Path $root 'scripts/new-offline-pack.ps1') -InputDirectory $payload -Metadata $metadataPath -Output $output } |
+                Should -Throw '*must stay inside InputDirectory*'
+            Test-Path -LiteralPath $output | Should -BeFalse
+        }
+        finally {
             if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
         }
     }

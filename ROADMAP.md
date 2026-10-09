@@ -1,13 +1,20 @@
 # Roadmap
 
-Current focus: finish the **v0.2.6 candidate** validation before expanding the
-product. Baseline: [STATUS.md](STATUS.md). Completed work belongs in
+Code consolidation, security upgrade and local regression for the **v0.2.6
+candidate** are complete. Remaining work is listed below; cloud-host acceptance
+is deliberately deferred. Baseline:
+[STATUS.md](STATUS.md). Completed release work belongs in
 [CHANGELOG.md](CHANGELOG.md), not in this backlog.
 
 These are pending items and proposals, not claims of completed acceptance or
 an instruction to run system-changing tests on the development workstation.
 
-## P0 — next acceptance round
+Completed consolidation/security work and local results are recorded in
+[CHANGELOG](CHANGELOG.md) and
+[the October evidence record](docs/records/code-consolidation-2026-10-09.md),
+not retained as completed checkboxes in this pending-only backlog.
+
+## Deferred — next real-host acceptance round
 
 Refresh the current candidate's local checks and native CI first, then use
 disposable targets with an independent recovery path. The recorded procedure
@@ -33,10 +40,6 @@ making a release decision.
 
 ## P1 — maintenance and known gaps
 
-- [ ] **Go 1.26 migration:** align go.mod, local tools and CI; update x/crypto
-  to a release fixing the tracked channel-deadlock advisories and rerun
-  govulncheck plus regression tests. Review the unmaintained openpgp dependency
-  separately; see STATUS for the recorded advisory scope.
 - [ ] **Winget-less mixed dependency strategy:** design per-component download
   selection so OpenSSH capability and a pinned offline Tailscale installer do
   not require manually switching one global strategy.
@@ -54,11 +57,6 @@ making a release decision.
   desktop installers.
 - Managed update channels with explicit rollback.
 
-## Code organization follow-up — separate from release work
-
-The package boundaries are already meaningful; do not rename directories just
-for symmetry. If frontend behavior work warrants it, consider extracting the
-wizard state/event handling from `frontend/src/main.ts` (currently about 1,000
-lines) and splitting views by task, preserving bridge and browser tests. This
-is a refactoring candidate, not part of this documentation cleanup or a reason
-to rewrite the engine.
+Do not rename directories solely for symmetry or turn the code cleanup into
+an engine rewrite. Real-host acceptance is deliberately deferred for this round;
+its open boundaries remain recorded above, not marked as passed.

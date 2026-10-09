@@ -3,16 +3,10 @@
 Run from a clean checkout before tagging:
 
 ```text
-go test -p 1 ./...
-go test -p 1 -race ./...
-go vet ./...
+pnpm --dir frontend install --frozen-lockfile
+pnpm --dir frontend exec playwright install chromium
+node scripts/check.mjs release
 go test . -run TestReleaseVersionConsistency -count=1
-cd frontend
-pnpm install --frozen-lockfile
-pnpm run typecheck
-pnpm run build
-pnpm run test:e2e
-cd ..
 wails build
 ```
 
@@ -29,13 +23,15 @@ Then:
 4. Tag the tested commit, push, wait for a green release workflow, and confirm
    the assets, checksums, and SBOM actually download.
 
-Optional hardening, run when touching the relevant area:
+The shared release profile already includes the pinned staticcheck,
+govulncheck/gosec scanners, frontend audit, race, documentation and platform
+script gates. A passing local profile is not native installer or real-host
+acceptance. CI secret scanning remains a separate gate.
 
-- `staticcheck`, `govulncheck`, `gosec -severity high`;
+Additional acceptance, run when touching the relevant area:
+
 - the mutation interruption matrix: failure before/during/after each action,
   process interruption after intent is journaled, cancellation during Apply,
   repeated Rollback, and GUI elevated Rollback;
-- `shellcheck` on the POSIX scripts and macOS launcher;
-- Pester under `tests/` (Windows);
 - `tests/installer-upgrade-smoke.ps1` after changing the installer;
 - a secret scan (e.g. gitleaks) after adding fixtures or sample data.

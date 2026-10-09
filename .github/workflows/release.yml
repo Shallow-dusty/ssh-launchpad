@@ -21,6 +21,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
       - name: Validate candidate metadata before packaging
         shell: bash
         run: |
@@ -31,14 +34,16 @@ jobs:
           go test . -run TestReleaseVersionConsistency -count=1
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
-      # Serialize packages, not goroutines: retain race and lock contention tests.
-      - run: go test -p 1 ./...
-      - run: go test -p 1 -race ./...
-      - run: go vet ./...
-      - run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
-      - run: go run github.com/securego/gosec/v2/cmd/gosec@v2.28.0 -exclude-generated -severity high ./...
-      - run: shellcheck scripts/bootstrap.sh scripts/new-offline-pack.sh "packaging/launchers/Start SSH Launchpad.command"
+      - name: Shared Go checks
+        run: node scripts/check.mjs go
+      - name: Shared serialized race checks
+        run: node scripts/check.mjs race
+      - name: Shared documentation and runner contracts
+        run: node scripts/check.mjs docs
+      - name: Shared Unix script and command checks
+        run: node scripts/check.mjs scripts
+      - name: Shared pinned security checks
+        run: node scripts/check.mjs security
       - name: Secret scan
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
@@ -175,20 +180,16 @@ jobs:
       - name: Install frontend
         working-directory: frontend
         run: pnpm install --frozen-lockfile
-      - name: Audit frontend dependencies
-        working-directory: frontend
-        run: pnpm audit --audit-level high
       - name: Install test dependencies
         shell: pwsh
         run: |
           Install-Module Pester -MinimumVersion 5.7.1 -Force -Scope CurrentUser
           pnpm --dir frontend exec playwright install chromium
-      - name: Script and browser tests
+      - name: Shared Windows script checks
         shell: pwsh
-        run: |
-          Invoke-Pester -Path tests -CI
-          pnpm --dir frontend run build
-          pnpm --dir frontend run test:e2e
+        run: node scripts/check.mjs scripts
+      - name: Shared UI audit, build and browser checks
+        run: node scripts/check.mjs ui
       - name: Build validated user-scope installer
         shell: pwsh
         run: |

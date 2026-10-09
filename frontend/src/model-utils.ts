@@ -1,5 +1,12 @@
 import type { Profile, Report } from "./types";
 
+export class ReportError extends Error {
+  constructor(readonly report: Report) {
+    super(report.error ?? "");
+    this.name = "ReportError";
+  }
+}
+
 export function isNewerVersion(candidate: string, current: string): boolean {
   const parse = (value: string) =>
     value

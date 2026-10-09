@@ -2,23 +2,14 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"sync"
 
-	elevationprotocol "github.com/Shallow-dusty/ssh-launchpad/internal/elevation"
 	"github.com/Shallow-dusty/ssh-launchpad/internal/launchpad"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
-	"gopkg.in/yaml.v3"
 )
 
 type App struct {
@@ -45,14 +36,6 @@ type DesktopRequest struct {
 	PlanNeedsElevation bool `json:"planNeedsElevation,omitempty"`
 }
 
-type PublicKeyInfo struct {
-	Label          string `json:"label"`
-	Path           string `json:"path"`
-	PublicKey      string `json:"publicKey"`
-	PrivateKeyPath string `json:"privateKeyPath,omitempty"`
-	Generated      bool   `json:"generated"`
-}
-
 func NewApp() *App {
 	app := &App{jobs: map[string]*elevatedJobRecord{}}
 	app.engine = launchpad.NewEngine(func(event launchpad.Event) {
@@ -76,10 +59,6 @@ func (a *App) DefaultProfile() launchpad.Profile {
 	return normalizeDesktopProfile(launchpad.DefaultProfile())
 }
 
-func (a *App) ValidatePublicKey(value string) error {
-	return launchpad.ValidatePublicKey(strings.TrimSpace(value))
-}
-
 func (a *App) CheckForUpdate() (launchpad.UpdateInfo, error) {
 	return launchpad.CheckForUpdate(a.ctx)
 }
@@ -87,15 +66,17 @@ func (a *App) CheckForUpdate() (launchpad.UpdateInfo, error) {
 func (a *App) Run(request DesktopRequest) (launchpad.Report, error) {
 	request.Profile = normalizeDesktopProfile(request.Profile)
 	if err := request.Profile.Validate(); err != nil {
-		return launchpad.Report{ExitCode: launchpad.ExitInvalidProfile, Error: err.Error()}, err
+		return desktopInputFailure(request, err.Error()), nil
 	}
+	var report launchpad.Report
+	var runErr error
 	switch request.Stage {
 	case launchpad.StageCheck:
-		return a.engine.Check(a.ctx, request.Profile)
+		report, runErr = a.engine.Check(a.ctx, request.Profile)
 	case launchpad.StagePlan:
-		return a.engine.Plan(a.ctx, request.Profile)
+		report, runErr = a.engine.Plan(a.ctx, request.Profile)
 	case launchpad.StageApply:
-		return a.engine.Apply(a.ctx, request.Profile, launchpad.ApplyOptions{
+		report, runErr = a.engine.Apply(a.ctx, request.Profile, launchpad.ApplyOptions{
 			Confirmed:          request.Confirmed,
 			ExpectedPlanDigest: request.PlanDigest,
 			AllowSelfCut:       request.AllowSelfCut,
@@ -104,165 +85,27 @@ func (a *App) Run(request DesktopRequest) (launchpad.Report, error) {
 			ExternalVerify:     request.ExternalVerify,
 		})
 	case launchpad.StageVerify:
-		return a.engine.Verify(a.ctx, request.Profile)
+		report, runErr = a.engine.Verify(a.ctx, request.Profile)
 	default:
-		return launchpad.Report{ExitCode: launchpad.ExitInvalidProfile}, errors.New("unsupported stage")
+		return desktopInputFailure(request, "unsupported stage"), nil
 	}
+	// A Wails promise rejection discards the report and its reason code. Keep
+	// expected engine failures as data; the frontend adapter presents them.
+	if runErr != nil && report.Error == "" {
+		report.Error = runErr.Error()
+	}
+	return report, nil
 }
 
-func (a *App) BeginElevatedApply(request DesktopRequest) (ElevatedJob, error) {
-	if request.Stage != launchpad.StageApply || !request.Confirmed {
-		return ElevatedJob{}, errors.New("safe install requires an explicitly confirmed Apply request")
-	}
-	request.Profile = normalizeDesktopProfile(request.Profile)
-	if err := request.Profile.Validate(); err != nil {
-		return ElevatedJob{}, err
-	}
-	// The authoritative digest check happens inside Apply's own re-plan;
-	// here we only need the digest to be well-formed so the elevated helper
-	// accepts the handoff.
-	if decoded, err := hex.DecodeString(strings.TrimSpace(request.PlanDigest)); err != nil || len(decoded) != sha256.Size {
-		return ElevatedJob{}, errors.New("safe install requires the digest of the reviewed plan")
-	}
-	if request.PlanNoChanges {
-		report, applyErr := a.engine.Apply(a.ctx, request.Profile, desktopApplyOptions(request))
-		state := "failed"
-		if report.Success {
-			state = "completed"
-		}
-		return ElevatedJob{ID: report.ID, State: state, Report: &report, Error: errorText(applyErr)}, nil
-	}
-	id, err := newJobID()
-	if err != nil {
-		return ElevatedJob{}, err
-	}
-	root, err := jobRoot()
-	if err != nil {
-		return ElevatedJob{}, err
-	}
-	pruneOldJobs(root)
-	directory := filepath.Join(root, id)
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return ElevatedJob{}, err
-	}
-	record := &elevatedJobRecord{
-		status:       ElevatedJob{ID: id, State: "waiting-for-permission"},
-		directory:    directory,
-		responsePath: filepath.Join(directory, "response.json"),
-		eventsPath:   filepath.Join(directory, "events.jsonl"),
-	}
-	a.mu.Lock()
-	a.jobs[id] = record
-	a.mu.Unlock()
-
-	if runtime.GOOS == "windows" && request.PlanNeedsElevation && !launchpad.CurrentProcessElevated(a.ctx) {
-		for _, path := range []string{record.responsePath, record.eventsPath} {
-			if err := elevationprotocol.PrecreateFile(path); err != nil {
-				a.DismissElevatedJob(id)
-				return ElevatedJob{}, err
-			}
-		}
-		requestPath := filepath.Join(directory, "request.json")
-		elevatedRequest := elevationprotocol.NewRequest(
-			request.Profile,
-			desktopApplyOptions(request),
-			record.responsePath,
-			record.eventsPath,
-			"",
-		)
-		digest, err := elevationprotocol.WriteRequest(requestPath, elevatedRequest)
-		if err != nil {
-			a.DismissElevatedJob(id)
-			return ElevatedJob{}, err
-		}
-		executable, err := os.Executable()
-		if err != nil {
-			a.DismissElevatedJob(id)
-			return ElevatedJob{}, err
-		}
-		initial := record.status
-		go a.runUACJob(record, executable, requestPath, digest)
-		return initial, nil
-	}
-
-	initial := record.status
-	go a.runDirectJob(record, request)
-	return initial, nil
-}
-
-func (a *App) ElevatedApplyStatus(id string) (ElevatedJob, error) {
-	a.mu.Lock()
-	record := a.jobs[id]
-	a.mu.Unlock()
-	if record == nil {
-		return ElevatedJob{}, errors.New("safe install job was not found")
-	}
-	record.mu.Lock()
-	defer record.mu.Unlock()
-	status := record.status
-	status.Events = readJobEvents(record.eventsPath)
-	if status.State == "waiting-for-permission" && len(status.Events) > 0 {
-		status.State = "running"
-	}
-	return status, nil
-}
-
-func (a *App) DismissElevatedJob(id string) {
-	a.mu.Lock()
-	record := a.jobs[id]
-	delete(a.jobs, id)
-	a.mu.Unlock()
-	if record != nil {
-		_ = os.RemoveAll(record.directory)
-	}
-}
-
-func (a *App) runUACJob(record *elevatedJobRecord, executable, requestPath, digest string) {
-	defer os.Remove(requestPath)
-	err := launchElevatedHelper(context.Background(), executable, requestPath, digest)
-	finalizeUACJob(record, err)
-}
-
-func finalizeUACJob(record *elevatedJobRecord, launchErr error) {
-	response, responseErr := elevationprotocol.ReadResponse(record.responsePath)
-	record.mu.Lock()
-	defer record.mu.Unlock()
-	if responseErr == nil {
-		record.status.Report = &response.Report
-		record.status.Error = response.Error
-		if response.Report.Success {
-			record.status.State = "completed"
-		} else {
-			record.status.State = "failed"
-		}
-		return
-	}
-	if errors.Is(launchErr, errUACCancelled) {
-		record.status.State = "cancelled"
-		record.status.Error = "Windows 权限确认被取消，电脑没有改动。可以返回后重试。"
-		return
-	}
-	record.status.State = "failed"
-	if launchErr != nil {
-		record.status.Error = "Windows 管理员进程未完成：" + launchErr.Error()
-		return
-	}
-	record.status.Error = "Windows 管理员进程没有返回安装结果：" + responseErr.Error()
-}
-
-func (a *App) runDirectJob(record *elevatedJobRecord, request DesktopRequest) {
-	record.mu.Lock()
-	record.status.State = "running"
-	record.mu.Unlock()
-	report, err := a.engine.Apply(a.ctx, request.Profile, desktopApplyOptions(request))
-	record.mu.Lock()
-	defer record.mu.Unlock()
-	record.status.Report = &report
-	record.status.Error = errorText(err)
-	if report.Success {
-		record.status.State = "completed"
-	} else {
-		record.status.State = "failed"
+func desktopInputFailure(request DesktopRequest, message string) launchpad.Report {
+	return launchpad.Report{
+		SchemaVersion: launchpad.SchemaVersion,
+		Version:       launchpad.Version,
+		Stage:         request.Stage,
+		ProfileName:   request.Profile.Name,
+		ExitCode:      launchpad.ExitInvalidProfile,
+		ReasonCode:    launchpad.ReasonInvalidProfile,
+		Error:         message,
 	}
 }
 
@@ -299,272 +142,6 @@ func (a *App) Rollback(journalPath string) (launchpad.Report, error) {
 		report.Error = err.Error()
 	}
 	return report, nil
-}
-
-func (a *App) ExportReport(report launchpad.Report) (string, error) {
-	path, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
-		Title:           "Export SSH Launchpad report",
-		DefaultFilename: report.ID + ".report.json",
-		Filters: []wailsruntime.FileFilter{
-			{DisplayName: "JSON report", Pattern: "*.json"},
-		},
-	})
-	if err != nil || path == "" {
-		return "", err
-	}
-	data, err := json.MarshalIndent(launchpad.RedactReport(report), "", "  ")
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", err
-	}
-	return path, writePrivateFile(path, append(data, '\n'))
-}
-
-func (a *App) ImportProfile() (launchpad.Profile, error) {
-	path, err := wailsruntime.OpenFileDialog(a.ctx, wailsruntime.OpenDialogOptions{
-		Title: "导入 SSH Launchpad 配置",
-		Filters: []wailsruntime.FileFilter{
-			{DisplayName: "YAML / JSON profile", Pattern: "*.yaml;*.yml;*.json"},
-		},
-	})
-	if err != nil || path == "" {
-		return launchpad.Profile{}, err
-	}
-	return launchpad.LoadProfile(path)
-}
-
-func (a *App) ExportProfile(profile launchpad.Profile) (string, error) {
-	if err := profile.Validate(); err != nil {
-		return "", err
-	}
-	path, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
-		Title:           "导出 SSH Launchpad 配置",
-		DefaultFilename: profile.Name + ".ssh-launchpad.yaml",
-		Filters: []wailsruntime.FileFilter{
-			{DisplayName: "YAML profile", Pattern: "*.yaml"},
-		},
-	})
-	if err != nil || path == "" {
-		return "", err
-	}
-	data, err := marshalExportProfile(profile)
-	if err != nil {
-		return "", err
-	}
-	return path, writePrivateFile(path, data)
-}
-
-// marshalExportProfile strips secrets before a profile leaves the app: a
-// YAML export is meant to be shareable, so the Tailscale auth key never
-// travels with it.
-func marshalExportProfile(profile launchpad.Profile) ([]byte, error) {
-	profile.Transport.AuthKey = ""
-	return yaml.Marshal(profile)
-}
-
-func (a *App) ImportPersonalCard() (launchpad.PersonalCard, error) {
-	path, err := wailsruntime.OpenFileDialog(a.ctx, wailsruntime.OpenDialogOptions{
-		Title: "导入 SSH Launchpad 装机卡",
-		Filters: []wailsruntime.FileFilter{
-			{DisplayName: "SSH Launchpad personal card", Pattern: "*.sshlaunchpad-card;*.json"},
-		},
-	})
-	if err != nil || path == "" {
-		return launchpad.PersonalCard{}, err
-	}
-	return launchpad.LoadPersonalCard(path)
-}
-
-func (a *App) ExportPersonalCard(card launchpad.PersonalCard) (string, error) {
-	data, err := launchpad.MarshalPersonalCard(card)
-	if err != nil {
-		return "", err
-	}
-	filename := safeCardFilename(card.DisplayName) + ".sshlaunchpad-card"
-	path, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
-		Title:           "导出 SSH Launchpad 装机卡",
-		DefaultFilename: filename,
-		Filters: []wailsruntime.FileFilter{
-			{DisplayName: "SSH Launchpad personal card", Pattern: "*.sshlaunchpad-card"},
-		},
-	})
-	if err != nil || path == "" {
-		return "", err
-	}
-	if !strings.HasSuffix(strings.ToLower(path), ".sshlaunchpad-card") {
-		path += ".sshlaunchpad-card"
-	}
-	return path, writePrivateFile(path, data)
-}
-
-func safeCardFilename(value string) string {
-	value = strings.TrimSpace(value)
-	value = strings.Map(func(r rune) rune {
-		switch r {
-		case '<', '>', ':', '"', '/', '\\', '|', '?', '*':
-			return '-'
-		default:
-			if r < 32 {
-				return -1
-			}
-			return r
-		}
-	}, value)
-	value = strings.Trim(value, ". ")
-	if value == "" {
-		return "ssh-launchpad-personal"
-	}
-	return value
-}
-
-func (a *App) DiscoverPublicKeys() ([]PublicKeyInfo, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	paths, err := filepath.Glob(filepath.Join(home, ".ssh", "*.pub"))
-	if err != nil {
-		return nil, err
-	}
-	sort.Strings(paths)
-	keys := make([]PublicKeyInfo, 0, len(paths))
-	for _, path := range paths {
-		data, readErr := os.ReadFile(path)
-		if readErr != nil || len(data) > 32*1024 {
-			continue
-		}
-		value := strings.TrimSpace(string(data))
-		if launchpad.ValidatePublicKey(value) != nil {
-			continue
-		}
-		keys = append(keys, PublicKeyInfo{
-			Label:          filepath.Base(path),
-			Path:           path,
-			PublicKey:      value,
-			PrivateKeyPath: strings.TrimSuffix(path, ".pub"),
-		})
-	}
-	return keys, nil
-}
-
-func (a *App) GenerateControllerKey(label string) (PublicKeyInfo, error) {
-	sshKeygen, err := exec.LookPath("ssh-keygen")
-	if err != nil {
-		return PublicKeyInfo{}, errors.New("未找到 ssh-keygen；请先安装 Windows OpenSSH Client")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return PublicKeyInfo{}, err
-	}
-	directory := filepath.Join(home, ".ssh")
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return PublicKeyInfo{}, err
-	}
-	privatePath := filepath.Join(directory, launchpad.ControllerKeyBaseName)
-	publicPath := privatePath + ".pub"
-	if _, err := os.Stat(publicPath); errors.Is(err, os.ErrNotExist) {
-		if _, privateErr := os.Stat(privatePath); privateErr == nil {
-			return PublicKeyInfo{}, errors.New("检测到已有私钥但缺少对应公钥；为避免覆盖，已停止生成。请用 ssh-keygen -y 恢复公钥或选择其他密钥")
-		}
-		comment := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(label, "\r", " "), "\n", " "))
-		if comment == "" {
-			comment = "ssh-launchpad-controller"
-		}
-		command := exec.Command(sshKeygen, "-t", "ed25519", "-f", privatePath, "-N", "", "-C", comment)
-		if output, runErr := command.CombinedOutput(); runErr != nil {
-			return PublicKeyInfo{}, fmt.Errorf("生成控制电脑密钥失败: %v: %s", runErr, strings.TrimSpace(string(output)))
-		}
-		_ = os.Chmod(privatePath, 0o600)
-		_ = os.Chmod(publicPath, 0o644)
-	}
-	data, err := os.ReadFile(publicPath)
-	if err != nil {
-		return PublicKeyInfo{}, err
-	}
-	value := strings.TrimSpace(string(data))
-	if err := launchpad.ValidatePublicKey(value); err != nil {
-		return PublicKeyInfo{}, err
-	}
-	return PublicKeyInfo{
-		Label:          filepath.Base(publicPath),
-		Path:           publicPath,
-		PublicKey:      value,
-		PrivateKeyPath: privatePath,
-		Generated:      true,
-	}, nil
-}
-
-func (a *App) ImportPublicKey() (PublicKeyInfo, error) {
-	path, err := wailsruntime.OpenFileDialog(a.ctx, wailsruntime.OpenDialogOptions{
-		Title: "选择控制电脑的公钥",
-		Filters: []wailsruntime.FileFilter{
-			{DisplayName: "OpenSSH public key", Pattern: "*.pub;*.txt"},
-		},
-	})
-	if err != nil || path == "" {
-		return PublicKeyInfo{}, err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return PublicKeyInfo{}, err
-	}
-	if len(data) > 32*1024 || strings.Contains(string(data), "PRIVATE KEY") {
-		return PublicKeyInfo{}, errors.New("文件不是安全的公钥文件；私钥不会被导入")
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		value := strings.TrimSpace(line)
-		if launchpad.ValidatePublicKey(value) == nil {
-			return PublicKeyInfo{Label: filepath.Base(path), Path: path, PublicKey: value}, nil
-		}
-	}
-	return PublicKeyInfo{}, errors.New("文件中没有找到支持的 OpenSSH 公钥")
-}
-
-func (a *App) ExportPairingFile(publicKey string) (string, error) {
-	publicKey = strings.TrimSpace(publicKey)
-	if err := launchpad.ValidatePublicKey(publicKey); err != nil {
-		return "", err
-	}
-	path, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
-		Title:           "导出配对公钥",
-		DefaultFilename: "ssh-launchpad-controller.pub",
-		Filters: []wailsruntime.FileFilter{
-			{DisplayName: "OpenSSH public key", Pattern: "*.pub"},
-		},
-	})
-	if err != nil || path == "" {
-		return "", err
-	}
-	return path, os.WriteFile(path, []byte(publicKey+"\n"), 0o644)
-}
-
-func writePrivateFile(path string, data []byte) error {
-	// Stage privately before replacement: never truncate or follow an existing
-	// broad-permission export, and leave its original contents on failure.
-	file, err := os.CreateTemp(filepath.Dir(path), ".ssh-launchpad-export-*")
-	if err != nil {
-		return err
-	}
-	tmp := file.Name()
-	defer os.Remove(tmp)
-	if err := file.Chmod(0o600); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
 }
 
 func errorText(err error) string {

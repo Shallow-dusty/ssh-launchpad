@@ -3,6 +3,7 @@ package launchpad
 import (
 	"encoding/base64"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -46,4 +47,13 @@ func configCommands(profile Profile, snapshot Snapshot) ([]string, []string) {
 	}
 	rollback += `rm -f "$backup" "$backup.tmp"; fi`
 	return unixCommand(apply), unixCommand(rollback)
+}
+
+func configureSSHAction(profile Profile, snapshot Snapshot) Action {
+	a := baseAction("configure-sshd", "configure_sshd", "ssh-config", RiskHigh, fmt.Sprintf("Set SSH port %d and key-oriented authentication", profile.SSH.Port), "The effective SSH port, configuration validity, or authentication policy does not match the profile.")
+	a.RequiresElevation = true
+	a.Reversible = true
+	a.Command, a.RollbackCommand = configCommands(profile, snapshot)
+	a.Params = map[string]string{"port": strconv.Itoa(profile.SSH.Port), "managedBlock": "SSH-LAUNCHPAD"}
+	return a
 }

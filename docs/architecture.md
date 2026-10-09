@@ -21,8 +21,12 @@ standalone bootstrap scripts -> verified release artifact -> CLI or Studio
 ```
 
 `internal/launchpad` owns profiles, probing, planning, execution, download
-verification, journals, events, and reports. `cmd/ssh-launchpad` and `app.go`
-only translate user input into engine calls. The UI does not assemble shell
+verification, journals, events, and reports. `cmd/ssh-launchpad` and the
+root `app*.go` bridge files only translate user input into engine calls.
+The frontend binds one desktop/preview adapter in `backend.ts`; task
+controllers receive shared state and UI callbacks explicitly. File/module
+responsibilities are mapped in [development](development.md#source-responsibilities).
+The Go package boundaries and Wails method names are unchanged. The UI does not assemble shell
 commands or decide safety policy. The desktop shell passes the reviewed plan's
 no-change and elevation flags as execution-path hints; the authoritative plan
 digest check always happens inside the engine's own re-plan in Apply, so a
@@ -85,7 +89,17 @@ interrupted work stays an incomplete recovery, never a successful full restore.
 
 ## Report and exit contract
 
-Every stage returns JSON schema version 1. Exit codes are stable:
+Every stage returns JSON schema version 1. Failed reports may include the
+additive `reasonCode` diagnostic; existing fields and process exit codes stay
+stable. In particular, `confirmation_required`, `plan_changed` and
+`mutation_busy` share exit 5 but are distinct causes. GUI and CLI use this
+metadata rather than classifying English error words.
+
+The Wails Run method retains expected engine failures as reports, instead of
+rejecting a promise and dropping the diagnostic payload. The frontend adapter
+wraps failed stages in a report-bearing error; Verify drift with a remaining
+plan stays an inspectable result, never a successful Apply-time substitute.
+Unknown file/runtime failures retain their raw detail. Exit codes are stable:
 
 | Code | Meaning |
 | ---: | --- |

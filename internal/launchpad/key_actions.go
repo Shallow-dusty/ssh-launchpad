@@ -3,6 +3,7 @@ package launchpad
 import (
 	"encoding/base64"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -31,4 +32,13 @@ func keyCommands(profile Profile, snapshot Snapshot) ([]string, []string) {
 	apply := prelude + `if [ -e "$ssh_dir" ] && [ ! -d "$ssh_dir" ]; then exit 1; fi; if [ ! -d "$ssh_dir" ]; then mkdir -m 700 "$ssh_dir"; if [ "$(id -u)" -eq 0 ]; then chown "$target_user" "$ssh_dir"; fi; fi; if [ -e "$path" ] && [ ! -f "$path" ]; then exit 1; fi; if [ -e "$backup" ] || [ -e "$backup.created" ] || [ -e "$backup.tmp" ] || [ -L "$backup.tmp" ]; then echo 'key backup already exists' >&2; exit 1; fi; if [ -f "$path" ]; then cp -p "$path" "$backup.tmp"; mv "$backup.tmp" "$backup"; else (set -C; : > "$backup.created"); fi; tmp="$(mktemp "$ssh_dir/.ssh-launchpad.tmp.XXXXXX")"; trap 'rm -f "$tmp"' EXIT HUP INT TERM; if [ -f "$path" ]; then cat "$path" > "$tmp"; fi; printf '\n' >> "$tmp"; printf %s ` + shQuote(encoded) + ` | base64 ` + decode + ` >> "$tmp"; chmod 600 "$tmp"; if [ "$(id -u)" -eq 0 ]; then chown "$target_user" "$tmp"; fi; mv "$tmp" "$path"`
 	rollback := prelude + `if [ -e "$path" ] && [ ! -f "$path" ]; then exit 1; fi; if [ -f "$backup" ]; then cp -p "$backup" "$path"; elif [ -f "$backup.created" ]; then rm -f "$path"; fi; rm -f "$backup" "$backup.created" "$backup.ready" "$backup.tmp"`
 	return unixCommand(apply), unixCommand(rollback)
+}
+
+func configureKeysAction(profile Profile, snapshot Snapshot) Action {
+	a := baseAction("configure-authorized-keys", "configure_keys", "authentication", RiskHigh, "Merge the declared SSH public keys", "One or more declared controller public keys are not present. Existing keys are preserved and the file is backed up.")
+	a.RequiresElevation = snapshot.Platform == PlatformWindows && snapshot.TargetUserIsAdmin
+	a.Reversible = true
+	a.Command, a.RollbackCommand = keyCommands(profile, snapshot)
+	a.Params = map[string]string{"keyCount": strconv.Itoa(len(profile.SSH.PublicKeys))}
+	return a
 }

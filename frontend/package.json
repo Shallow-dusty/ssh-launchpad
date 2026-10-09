@@ -4,9 +4,9 @@
   "version": "0.2.6",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit",
+    "dev": "go run ../scripts/internal/bridge-types -root .. && vite",
+    "build": "pnpm run typecheck && vite build",
+    "typecheck": "go run ../scripts/internal/bridge-types -root .. && tsc --noEmit",
     "preview": "vite preview --host 127.0.0.1",
     "test:e2e": "pnpm run build && playwright test"
   },

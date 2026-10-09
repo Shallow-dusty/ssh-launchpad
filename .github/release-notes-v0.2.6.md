@@ -2,6 +2,21 @@
 
 Candidate notes; publishing remains a separate gate.
 
+## Code consolidation and security refresh (2026-10-08/09)
+
+- Split frontend controllers/backend access and Go entry/probe/action/journal
+  files by responsibility, within existing packages and without a UI rewrite.
+- Generate frontend wire types, App signatures and defaults from Go; retain
+  structured failures with optional reason codes instead of parsing error prose.
+- Share local/CI check gates, scanner pins and documentation validation.
+- Require Go 1.26.9, update x/crypto to v0.56.0 and transitive source-map-js to
+  1.2.2. Fresh scans report no reachable Go vulnerabilities or frontend advisories.
+  The unused openpgp module advisory remains documented, not hidden.
+- Final local checks include 35 browser scenarios, 32 Windows Pester cases,
+  Windows-native bridge/contract tests and six CLI target builds. No new cloud,
+  live GUI/UAC or installer acceptance was performed; see
+  `docs/records/code-consolidation-2026-10-09.md`.
+
 ## Field acceptance fixes
 
 First acceptance round on a disposable Windows Server 2022 host (details in
@@ -72,8 +87,8 @@ First acceptance round on a disposable Windows Server 2022 host (details in
 
 - Release defaults, Wails metadata, frontend metadata, bootstrap scripts, and
   tag-matched notes are validated before release packaging.
-- Local checks include Go tests/race/vet/staticcheck/govulncheck, ShellCheck,
-  frontend typecheck/build, 23 browser scenarios and six-platform cross-builds.
+- The September local baseline included Go tests/race/vet/staticcheck/govulncheck,
+  ShellCheck, frontend typecheck/build, 23 browser scenarios and six-platform cross-builds.
   Windows core tests also passed natively with mocked mutations. A subsequent
   disposable Windows Server 2022 round accepted live Apply/Verify/Rollback and
   installer upgrade/uninstall. Windows 10/11, GUI/UAC, the unelevated Apply gate

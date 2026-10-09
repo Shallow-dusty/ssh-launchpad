@@ -232,6 +232,25 @@ type ActionResult struct {
 	Error    string    `json:"error,omitempty"`
 }
 
+// FailureReason is optional diagnostic metadata. Exit codes and schema version
+// remain stable; clients must not infer a reason from English error prose.
+type FailureReason string
+
+const (
+	ReasonInvalidProfile       FailureReason = "invalid_profile"
+	ReasonProbeFailed          FailureReason = "probe_failed"
+	ReasonConfirmationRequired FailureReason = "confirmation_required"
+	ReasonPlanChanged          FailureReason = "plan_changed"
+	ReasonMutationBusy         FailureReason = "mutation_busy"
+	ReasonElevationRequired    FailureReason = "elevation_required"
+	ReasonSelfCutBlocked       FailureReason = "self_cut_blocked"
+	ReasonUnsupported          FailureReason = "unsupported"
+	ReasonExecutionFailed      FailureReason = "execution_failed"
+	ReasonDownloadFailed       FailureReason = "download_failed"
+	ReasonVerificationFailed   FailureReason = "verification_failed"
+	ReasonRollbackFailed       FailureReason = "rollback_failed"
+)
+
 type Report struct {
 	SchemaVersion int            `json:"schemaVersion"`
 	Version       string         `json:"version"`
@@ -249,6 +268,7 @@ type Report struct {
 	JournalPath   string         `json:"journalPath,omitempty"`
 	Warnings      []string       `json:"warnings,omitempty"`
 	Error         string         `json:"error,omitempty"`
+	ReasonCode    FailureReason  `json:"reasonCode,omitempty"`
 }
 
 type Journal struct {

@@ -33,6 +33,7 @@ func (e *Engine) Check(ctx context.Context, profile Profile) (Report, error) {
 	if err != nil {
 		report.ExitCode = ExitVerificationFailed
 		report.Error = err.Error()
+		report.ReasonCode = ReasonProbeFailed
 		return report, err
 	}
 	report.Success = true
@@ -48,6 +49,7 @@ func (e *Engine) Plan(ctx context.Context, profile Profile) (Report, error) {
 	if err != nil {
 		report.ExitCode = ExitVerificationFailed
 		report.Error = err.Error()
+		report.ReasonCode = ReasonProbeFailed
 		report.Finished = time.Now().UTC()
 		return report, err
 	}
@@ -62,7 +64,7 @@ func (e *Engine) Plan(ctx context.Context, profile Profile) (Report, error) {
 func (e *Engine) Apply(ctx context.Context, profile Profile, opts ApplyOptions) (Report, error) {
 	ctx, release, lockErr := mutationContext(ctx)
 	if lockErr != nil {
-		return failedApplyReport(profile.Name, nil, ExitConfirmationRequired, lockErr.Error())
+		return failedApplyReport(profile.Name, nil, ExitConfirmationRequired, ReasonMutationBusy, lockErr.Error())
 	}
 	defer release()
 	planReport, err := e.Plan(ctx, profile)
@@ -71,19 +73,20 @@ func (e *Engine) Apply(ctx context.Context, profile Profile, opts ApplyOptions) 
 	}
 	if opts.Confirmed {
 		if strings.TrimSpace(opts.ExpectedPlanDigest) == "" {
-			return failedApplyReport(profile.Name, planReport.Plan, ExitConfirmationRequired, "Apply requires the digest of the explicitly reviewed plan.")
+			return failedApplyReport(profile.Name, planReport.Plan, ExitConfirmationRequired, ReasonConfirmationRequired, "Apply requires the digest of the explicitly reviewed plan.")
 		}
 		if !strings.EqualFold(strings.TrimSpace(opts.ExpectedPlanDigest), planReport.Plan.Digest) {
-			return failedApplyReport(profile.Name, planReport.Plan, ExitConfirmationRequired, "The machine state or profile changed after Plan. Review and confirm the new plan before Apply.")
+			return failedApplyReport(profile.Name, planReport.Plan, ExitConfirmationRequired, ReasonPlanChanged, "The machine state or profile changed after Plan. Review and confirm the new plan before Apply.")
 		}
 	}
 	return e.Executor.Apply(ctx, profile, *planReport.Plan, opts)
 }
 
-func failedApplyReport(profile string, plan *Plan, code int, message string) (Report, error) {
+func failedApplyReport(profile string, plan *Plan, code int, reason FailureReason, message string) (Report, error) {
 	report := newReport(StageApply, profile, time.Now().UTC())
 	report.Plan = plan
 	report.ExitCode = code
+	report.ReasonCode = reason
 	report.Error = message
 	report.Finished = time.Now().UTC()
 	return report, errors.New(message)
@@ -97,6 +100,7 @@ func (e *Engine) Verify(ctx context.Context, profile Profile) (Report, error) {
 	if err != nil {
 		report.ExitCode = ExitVerificationFailed
 		report.Error = err.Error()
+		report.ReasonCode = ReasonProbeFailed
 		report.Finished = time.Now().UTC()
 		return report, err
 	}
@@ -105,6 +109,7 @@ func (e *Engine) Verify(ctx context.Context, profile Profile) (Report, error) {
 	report.Finished = time.Now().UTC()
 	if !plan.NoChanges || len(plan.Blockers) > 0 {
 		report.ExitCode = ExitVerificationFailed
+		report.ReasonCode = ReasonVerificationFailed
 		report.Error = "Verification found remaining drift."
 		if len(plan.Blockers) > 0 {
 			report.Error = "Verification is blocked: " + strings.Join(plan.Blockers, " ")
